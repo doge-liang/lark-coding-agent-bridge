@@ -12,6 +12,7 @@ coverage/
 .DS_Store
 .idea/
 .vscode/
+.worktrees/
 
 # Local maintenance scripts and unreleased changelog are not part of the package
 scripts/
