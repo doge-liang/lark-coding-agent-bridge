@@ -66,7 +66,7 @@ function rollbackState(state, message) {
       at: new Date().toISOString(),
     };
     writeState(next);
-    return next;
+    return { state: next, rolledBack: false };
   }
   const next = {
     current: state.previous,
@@ -79,7 +79,7 @@ function rollbackState(state, message) {
     },
   };
   writeState(next);
-  return next;
+  return { state: next, rolledBack: true };
 }
 
 async function runOnce() {
@@ -97,8 +97,7 @@ async function runOnce() {
     const waitMs = Number.isFinite(deadline) ? Math.max(1, deadline - Date.now()) : 60000;
     activationTimer = setTimeout(() => {
       child.kill('SIGTERM');
-      rollbackState(readState(), 'health-timeout');
-      rolledBackForTimeout = true;
+      rolledBackForTimeout = rollbackState(readState(), 'health-timeout').rolledBack === true;
     }, waitMs);
   }
   const forward = (signal) => child.kill(signal);
@@ -111,8 +110,9 @@ async function runOnce() {
   if (rolledBackForTimeout) return 'retry';
   const latest = readState();
   if (pendingActivation && latest.pendingActivation) {
-    rollbackState(latest, 'child-exited-before-healthy');
-    return 'retry';
+    const rollbackResult = rollbackState(latest, 'child-exited-before-healthy');
+    if (rollbackResult.rolledBack) return 'retry';
+    process.exit(1);
   }
   process.exit(Number(code));
 }

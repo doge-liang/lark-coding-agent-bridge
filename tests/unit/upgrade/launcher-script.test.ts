@@ -18,7 +18,7 @@ describe('upgrade launcher script', () => {
     expect(script).toContain('rollbackState');
   });
 
-  it('retries in the same launcher process after timeout rollback', () => {
+  it('retries after timeout only when rollback switches to a previous release', () => {
     const script = buildUpgradeLauncherScript({
       profile: 'codex-dev',
       channelHome: '/tmp/lark-home',
@@ -27,6 +27,22 @@ describe('upgrade launcher script', () => {
     });
 
     expect(script).toContain('rolledBackForTimeout');
+    expect(script).toContain(
+      "rolledBackForTimeout = rollbackState(readState(), 'health-timeout').rolledBack === true;",
+    );
     expect(script).toContain("if (rolledBackForTimeout) return 'retry';");
+  });
+
+  it('retries after early child exit only when rollback switches to a previous release', () => {
+    const script = buildUpgradeLauncherScript({
+      profile: 'codex-dev',
+      channelHome: '/tmp/lark-home',
+      fallbackNodePath: '/usr/bin/node',
+      fallbackBridgeEntryPath: '/repo/bin/lark-channel-bridge.mjs',
+    });
+
+    expect(script).toContain("const rollbackResult = rollbackState(latest, 'child-exited-before-healthy');");
+    expect(script).toContain("if (rollbackResult.rolledBack) return 'retry';");
+    expect(script).toContain('process.exit(1);');
   });
 });
