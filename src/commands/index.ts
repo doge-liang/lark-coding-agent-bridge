@@ -69,6 +69,7 @@ import {
 import type { SessionCatalog, SessionCatalogIdentity } from '../session/catalog';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
 import type { SessionStore } from '../session/store';
+import { createUpgradeCommandService, type UpgradeCommandService } from '../upgrade/command-service';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { evaluateRunPolicy } from '../policy/run-policy';
 import type { ProcessPool } from '../bot/process-pool';
@@ -132,6 +133,7 @@ export interface CommandContext {
     options: ListCodexThreadHistoryOptions,
   ) => Promise<CodexThreadHistoryEntry[]>;
   claudeHistoryProvider?: (cwd: string, limit: number) => Promise<SessionSummary[]>;
+  upgradeCommandService?: UpgradeCommandService;
   /** Set when invoked from a CardKit 2.0 form submit. Keys are input `name`s. */
   formValue?: Record<string, unknown>;
   /** True when this invocation came from a card button click rather than a
@@ -176,6 +178,7 @@ const handlers: Record<string, Handler> = {
   '/doc': handleDoc,
   '/invite': handleInvite,
   '/remove': handleRemove,
+  '/upgrade': handleUpgrade,
 };
 
 /**
@@ -194,6 +197,7 @@ const ADMIN_COMMANDS = new Set([
   '/ws',
   '/invite',
   '/remove',
+  '/upgrade',
 ]);
 
 function isAdminCommand(cmd: string): boolean {
@@ -814,6 +818,20 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     chatMode: ctx.chatMode,
   });
   await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+}
+
+async function handleUpgrade(args: string, ctx: CommandContext): Promise<void> {
+  if (ctx.chatMode !== 'p2p') {
+    await reply(ctx, '❌ 请私聊 bot 使用 `/upgrade`。');
+    return;
+  }
+  const service = ctx.upgradeCommandService ?? createUpgradeCommandService(ctx);
+  const [sub = 'status'] = args.trim().split(/\s+/).filter(Boolean);
+  if (sub === 'status') return reply(ctx, await service.status());
+  if (sub === 'check') return reply(ctx, await service.check());
+  if (sub === 'apply') return reply(ctx, await service.apply());
+  if (sub === 'rollback') return reply(ctx, await service.rollback());
+  await reply(ctx, '用法: `/upgrade [status|check|apply|rollback]`');
 }
 
 function formatOwnerState(ctx: CommandContext): string {
