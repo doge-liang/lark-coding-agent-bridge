@@ -34,9 +34,8 @@ export function resolveUpgradePaths(appPaths: Pick<AppPaths, 'profileDir'>): Upg
 }
 
 function safePathSegment(value: string): string {
-  const trimmed = value.trim();
-  if (!/^[A-Za-z0-9._-]+$/.test(trimmed) || trimmed === '.' || trimmed === '..') {
+  if (!/^[A-Za-z0-9._-]+$/.test(value) || value === '.' || value === '..') {
     throw new Error(`invalid upgrade path segment: ${value}`);
   }
-  return trimmed;
+  return value;
 }
