@@ -15,6 +15,7 @@ For a product walkthrough, see the [Feishu document](https://larkcommunity.feish
 - **Multiple workspaces**: use `/cd` to switch the current project, and `/ws` to save and reuse common project directories.
 - **Images and files**: send them to the bot directly, and the bridge downloads them locally for the agent.
 - **Interactive cards**: `/help`, `/ws list`, and `/status` return cards with clickable buttons.
+- **Controlled self-update**: an owner/admin can opt into a DM-only `/upgrade` flow for release-branch deployments.
 
 ## Prerequisites
 
@@ -87,6 +88,8 @@ Platform mapping:
 
 Daemon logs are under `~/.lark-channel/profiles/<profile>/logs/daemon/`.
 
+The service starts through a profile-local upgrade-aware launcher at `~/.lark-channel/profiles/<profile>/upgrades/launcher.mjs`. Without an active upgrade state, that launcher falls back to the CLI path captured when the service was registered. After a successful self-update, it starts the selected release instead.
+
 ### Multiple profiles: Claude and Codex
 
 By default, the bridge starts with the currently selected profile. Use `profile use <name>` to change it. Each profile keeps its own app credentials, sessions, working directories, and logs. Create multiple profiles only when you need to connect multiple PersonalAgent apps, or run Claude and Codex as separate bots:
@@ -102,6 +105,36 @@ For example, to restart only the Codex bot:
 lark-channel-bridge restart --profile codex
 lark-channel-bridge status --profile codex
 ```
+
+## Controlled self-update
+
+Self-update is disabled by default and is intended for trusted git/release-branch deployments. The running bridge root must be a git checkout or a previous release clone with the configured remote; npm-only global installs should still be updated with npm/pnpm.
+
+Enable it by editing the matching profile in `~/.lark-channel/config.json`:
+
+```json
+{
+  "upgrade": {
+    "enabled": true,
+    "remote": "origin",
+    "branch": "release",
+    "requireTests": false,
+    "healthTimeoutMs": 60000,
+    "retainReleases": 3
+  }
+}
+```
+
+Then DM the bot as the owner or an admin:
+
+```text
+/upgrade status
+/upgrade check
+/upgrade apply
+/upgrade rollback
+```
+
+`/upgrade` never accepts an arbitrary chat-provided URL or ref. `apply` fetches the configured release branch, clones it into a profile-local staging directory, runs `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm build`, and optionally `pnpm test`, then switches launcher state and asks the OS service to restart. If the new bridge does not mark itself healthy before `healthTimeoutMs`, the launcher rolls back to the previous release.
 
 ## Commands
 
@@ -156,6 +189,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/exit <id\|#>` | Stop a bridge process |
 | `/reconnect` | Force a WebSocket reconnect |
 | `/doctor [description]` | Run low-sensitive diagnostics |
+| `/upgrade [status\|check\|apply\|rollback]` | Owner/admin DM-only controlled self-update from the configured release branch |
 | `/help` | Help card |
 
 DMs do not require an @ mention. Groups and topic groups require `@bot` by default; `@all` is ignored. Cloud-doc comments in supported document types run when the bot is mentioned.
@@ -220,6 +254,7 @@ The legacy `sandbox` field is still readable for old configs. After the bridge s
 | `~/.lark-channel/profiles/<profile>/lark-cli/` | Profile-local lark-cli directory |
 | `~/.lark-channel/profiles/<profile>/media/` | Attachment cache |
 | `~/.lark-channel/profiles/<profile>/logs/` | Structured run logs |
+| `~/.lark-channel/profiles/<profile>/upgrades/` | Self-update launcher, state, releases, staging, and logs |
 | `~/.lark-channel/registry/processes.json` | Local process registry |
 | `~/.lark-channel/registry/locks/` | Profile and app locks |
 

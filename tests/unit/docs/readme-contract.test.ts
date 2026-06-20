@@ -26,6 +26,12 @@ describe('README runtime contract', () => {
       'pnpm test',
       'pnpm typecheck',
       'pnpm build',
+      'controlled self-update',
+      '受控自更新',
+      '/upgrade [status',
+      'profiles/<profile>/upgrades',
+      'release branch',
+      'release 分支',
     ]) {
       expect(docs).toContain(phrase);
     }
