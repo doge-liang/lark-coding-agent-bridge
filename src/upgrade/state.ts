@@ -79,12 +79,15 @@ export function setPendingActivation(
 ): UpgradeState {
   const startedAt = input.now.toISOString();
   const deadlineAt = new Date(input.now.getTime() + input.healthTimeoutMs).toISOString();
+  const previous =
+    input.previousCommit && input.previousPath
+      ? { commit: input.previousCommit, path: input.previousPath }
+      : undefined;
+  const { previous: _previous, ...rest } = state;
   return {
-    ...state,
+    ...rest,
     current: { commit: input.commit, path: input.path },
-    ...(input.previousCommit && input.previousPath
-      ? { previous: { commit: input.previousCommit, path: input.previousPath } }
-      : {}),
+    ...(previous ? { previous } : {}),
     pendingActivation: {
       commit: input.commit,
       operationId: input.operationId,
@@ -129,7 +132,6 @@ export function markActivationRolledBack(
   }
   return {
     current: state.previous,
-    previous: state.current,
     lastOperation: {
       kind: 'apply',
       status: 'rolled_back',

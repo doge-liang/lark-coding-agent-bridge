@@ -73,6 +73,31 @@ describe('upgrade state store', () => {
     });
   });
 
+  it('clears stale previous when pending activation has no previous release', () => {
+    const next = setPendingActivation(
+      {
+        current: { commit: 'old', path: '/old' },
+        previous: { commit: 'stale', path: '/stale' },
+      },
+      {
+        commit: 'new',
+        path: '/new',
+        now: new Date('2026-06-20T00:00:00.000Z'),
+        healthTimeoutMs: 60_000,
+        operationId: 'op-1',
+      },
+    );
+
+    expect(next.current).toEqual({ commit: 'new', path: '/new' });
+    expect(next.previous).toBeUndefined();
+    expect(next.pendingActivation).toEqual({
+      commit: 'new',
+      operationId: 'op-1',
+      startedAt: '2026-06-20T00:00:00.000Z',
+      deadlineAt: '2026-06-20T00:01:00.000Z',
+    });
+  });
+
   it('rolls back current to previous and records last operation', () => {
     const rolledBack = markActivationRolledBack(
       {
@@ -89,6 +114,7 @@ describe('upgrade state store', () => {
     );
 
     expect(rolledBack.current).toEqual({ commit: 'old', path: '/old' });
+    expect(rolledBack.previous).toBeUndefined();
     expect(rolledBack.pendingActivation).toBeUndefined();
     expect(rolledBack.lastOperation).toMatchObject({
       kind: 'apply',
