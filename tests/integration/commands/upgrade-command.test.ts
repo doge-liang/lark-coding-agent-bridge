@@ -3,7 +3,12 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
+import {
+  runCommandHandler,
+  tryHandleCommand,
+  type CommandContext,
+  type Controls,
+} from '../../../src/commands/index.js';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
 import { createRootConfig, saveRootConfig } from '../../../src/config/profile-store.js';
 import { SessionStore } from '../../../src/session/store.js';
@@ -34,6 +39,7 @@ interface Harness {
     rollback: ReturnType<typeof vi.fn<() => Promise<string>>>;
   };
   run(content: string, overrides?: RunOverrides): Promise<boolean>;
+  runCard(args: string, overrides?: RunOverrides): Promise<boolean>;
 }
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -82,6 +88,16 @@ describe('Lark upgrade command', () => {
     await expect(h.run('/upgrade rollback')).resolves.toBe(true);
     expect(lastMarkdown(h.channel)).toContain('old');
   });
+
+  it('rejects upgrade command callbacks', async () => {
+    const h = await createHarness();
+    h.upgrade.apply.mockResolvedValue('已切换到 `abc123`，正在重启。');
+
+    await expect(h.runCard('apply')).resolves.toBe(true);
+
+    expect(h.upgrade.apply).not.toHaveBeenCalled();
+    expect(lastMarkdown(h.channel)).toContain('文字命令');
+  });
 });
 
 async function createHarness(): Promise<Harness> {
@@ -117,10 +133,14 @@ async function createHarness(): Promise<Harness> {
 
   workspaces.setCwd('chat-1', workspaceRealpath);
 
-  const run = (content: string, overrides: RunOverrides = {}): Promise<boolean> => {
+  const context = (
+    content: string,
+    overrides: RunOverrides = {},
+    extra: Partial<CommandContext> = {},
+  ): CommandContext => {
     const chatId = overrides.chatId ?? 'chat-1';
     const scope = overrides.scope ?? chatId;
-    return tryHandleCommand({
+    return {
       channel: channel as unknown as CommandContext['channel'],
       msg: message(content, {
         chatId,
@@ -134,15 +154,20 @@ async function createHarness(): Promise<Harness> {
       activeRuns,
       controls,
       upgradeCommandService: upgrade,
-    });
+      ...extra,
+    };
   };
+  const run = (content: string, overrides: RunOverrides = {}): Promise<boolean> =>
+    tryHandleCommand(context(content, overrides));
+  const runCard = (args: string, overrides: RunOverrides = {}): Promise<boolean> =>
+    runCommandHandler('upgrade', args, context('/upgrade', overrides, { fromCardAction: true }));
 
   cleanups.push(async () => {
     await Promise.all([sessions.flush(), workspaces.flush()]);
     await tmp.cleanup();
   });
 
-  return { tmp, channel, sessions, workspaces, activeRuns, agent, controls, upgrade, run };
+  return { tmp, channel, sessions, workspaces, activeRuns, agent, controls, upgrade, run, runCard };
 }
 
 function appConfig(defaultWorkspace: string): ProfileConfig {

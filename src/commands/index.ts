@@ -821,6 +821,10 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
 }
 
 async function handleUpgrade(args: string, ctx: CommandContext): Promise<void> {
+  if (ctx.fromCardAction) {
+    await reply(ctx, '❌ 请私聊 bot 发送文字命令 `/upgrade`。');
+    return;
+  }
   if (ctx.chatMode !== 'p2p') {
     await reply(ctx, '❌ 请私聊 bot 使用 `/upgrade`。');
     return;
