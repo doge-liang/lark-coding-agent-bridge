@@ -344,9 +344,11 @@ export async function runStart(opts: StartOptions): Promise<void> {
             log.warn('registry', 'update-failed', { step: 'botName', err: String(err) }),
           );
         }
-        await markUpgradeActivationHealthy(appPaths, await currentUpgradeCommit(appPaths)).catch((err) =>
-          log.warn('upgrade', 'activation-mark-failed', { err: String(err) }),
-        );
+        try {
+          await markUpgradeActivationHealthy(appPaths, await currentUpgradeCommit(appPaths));
+        } catch (err) {
+          log.warn('upgrade', 'activation-mark-failed', { err: String(err) });
+        }
 
         process.on('SIGINT', () => void stop('SIGINT'));
         process.on('SIGTERM', () => void stop('SIGTERM'));

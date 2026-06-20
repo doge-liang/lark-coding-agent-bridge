@@ -96,10 +96,14 @@ describe('start runtime agent factory', () => {
   it('marks upgrade activation healthy after bot identity is backfilled', async () => {
     const source = await readFile(join(process.cwd(), 'src/cli/commands/start.ts'), 'utf8');
     const botNameIndex = source.indexOf('const botName = bridge.channel.botIdentity?.name;');
+    const tryIndex = source.indexOf('try {', botNameIndex);
     const markIndex = source.indexOf('await markUpgradeActivationHealthy', botNameIndex);
+    const catchIndex = source.indexOf("log.warn('upgrade', 'activation-mark-failed'", markIndex);
 
     expect(botNameIndex).toBeGreaterThanOrEqual(0);
+    expect(tryIndex).toBeGreaterThan(botNameIndex);
     expect(markIndex).toBeGreaterThan(botNameIndex);
+    expect(catchIndex).toBeGreaterThan(markIndex);
   });
 
   it('rejects reconnect when a profile changes agent kind in place', () => {
