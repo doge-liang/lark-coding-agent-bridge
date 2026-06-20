@@ -44,6 +44,9 @@ import { resolveProfileRuntime } from '../../runtime/profile-runtime';
 import { refreshOwnerControls } from '../../policy/owner';
 import { SessionStore } from '../../session/store';
 import { SessionCatalog } from '../../session/catalog';
+import { markUpgradeActivationHealthy } from '../../upgrade/activation';
+import { resolveUpgradePaths } from '../../upgrade/paths';
+import { loadUpgradeState } from '../../upgrade/state';
 import { WorkspaceStore } from '../../workspace/store';
 
 // Prefer IPv4 — Node 20+ defaults to "verbatim" which respects whatever
@@ -341,6 +344,9 @@ export async function runStart(opts: StartOptions): Promise<void> {
             log.warn('registry', 'update-failed', { step: 'botName', err: String(err) }),
           );
         }
+        await markUpgradeActivationHealthy(appPaths, await currentUpgradeCommit(appPaths)).catch((err) =>
+          log.warn('upgrade', 'activation-mark-failed', { err: String(err) }),
+        );
 
         process.on('SIGINT', () => void stop('SIGINT'));
         process.on('SIGTERM', () => void stop('SIGTERM'));
@@ -383,6 +389,11 @@ async function checkRuntimeAgentAvailability(agent: AgentAdapter): Promise<Agent
     diagnostic,
     error: new AgentPreflightError(diagnostic),
   };
+}
+
+async function currentUpgradeCommit(appPaths: Pick<AppPaths, 'profileDir'>): Promise<string | undefined> {
+  const state = await loadUpgradeState(resolveUpgradePaths(appPaths).stateFile);
+  return state.current?.commit;
 }
 
 export function assertReconnectAgentKindUnchanged(
