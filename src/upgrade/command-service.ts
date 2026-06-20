@@ -1,4 +1,5 @@
-import { dirname } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CommandContext } from '../commands';
 import { resolveAppPaths } from '../config/app-paths';
@@ -38,7 +39,26 @@ export function createUpgradeCommandService(ctx: CommandContext): UpgradeCommand
 }
 
 function currentBridgeRoot(): string {
-  return dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+  const entryPath = process.argv[1] ? realpathIfPresent(process.argv[1]) : fileURLToPath(import.meta.url);
+  return resolveBridgeRootFromEntry(entryPath);
+}
+
+export function resolveBridgeRootFromEntry(entryPath: string): string {
+  const entryDir = dirname(entryPath);
+  const parent = basename(entryDir);
+  const grandparent = basename(dirname(entryDir));
+
+  if (parent === 'bin' || parent === 'dist') return dirname(entryDir);
+  if (grandparent === 'src') return dirname(dirname(entryDir));
+  return entryDir;
+}
+
+function realpathIfPresent(entryPath: string): string {
+  try {
+    return realpathSync(entryPath);
+  } catch {
+    return entryPath;
+  }
 }
 
 function formatStatus(result: UpgradeStatus): string {
