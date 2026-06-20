@@ -91,12 +91,14 @@ async function runOnce() {
   });
   const pendingActivation = state.pendingActivation;
   let activationTimer;
+  let rolledBackForTimeout = false;
   if (pendingActivation) {
     const deadline = Date.parse(pendingActivation.deadlineAt);
     const waitMs = Number.isFinite(deadline) ? Math.max(1, deadline - Date.now()) : 60000;
     activationTimer = setTimeout(() => {
       child.kill('SIGTERM');
       rollbackState(readState(), 'health-timeout');
+      rolledBackForTimeout = true;
     }, waitMs);
   }
   const forward = (signal) => child.kill(signal);
@@ -106,6 +108,7 @@ async function runOnce() {
   if (activationTimer) clearTimeout(activationTimer);
   process.removeListener('SIGINT', forward);
   process.removeListener('SIGTERM', forward);
+  if (rolledBackForTimeout) return 'retry';
   const latest = readState();
   if (pendingActivation && latest.pendingActivation) {
     rollbackState(latest, 'child-exited-before-healthy');

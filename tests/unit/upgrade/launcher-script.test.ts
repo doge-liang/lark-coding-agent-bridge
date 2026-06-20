@@ -17,4 +17,16 @@ describe('upgrade launcher script', () => {
     expect(script).toContain('pendingActivation');
     expect(script).toContain('rollbackState');
   });
+
+  it('retries in the same launcher process after timeout rollback', () => {
+    const script = buildUpgradeLauncherScript({
+      profile: 'codex-dev',
+      channelHome: '/tmp/lark-home',
+      fallbackNodePath: '/usr/bin/node',
+      fallbackBridgeEntryPath: '/repo/bin/lark-channel-bridge.mjs',
+    });
+
+    expect(script).toContain('rolledBackForTimeout');
+    expect(script).toContain("if (rolledBackForTimeout) return 'retry';");
+  });
 });
