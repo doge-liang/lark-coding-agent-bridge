@@ -89,6 +89,40 @@ describe('Lark upgrade command', () => {
     expect(lastMarkdown(h.channel)).toContain('old');
   });
 
+  it('acknowledges upgrade apply before the long-running apply finishes', async () => {
+    const h = await createHarness();
+    const apply = deferred<string>();
+    h.upgrade.apply.mockReturnValue(apply.promise);
+
+    const run = h.run('/upgrade apply');
+    await nextTick();
+
+    try {
+      expect(h.upgrade.apply).toHaveBeenCalledTimes(1);
+      expect(allMarkdown(h.channel).some((markdown) => markdown.includes('正在升级'))).toBe(true);
+    } finally {
+      apply.resolve('已切换到 `abc123`，正在重启。');
+      await run;
+    }
+  });
+
+  it('acknowledges upgrade rollback before the long-running rollback finishes', async () => {
+    const h = await createHarness();
+    const rollback = deferred<string>();
+    h.upgrade.rollback.mockReturnValue(rollback.promise);
+
+    const run = h.run('/upgrade rollback');
+    await nextTick();
+
+    try {
+      expect(h.upgrade.rollback).toHaveBeenCalledTimes(1);
+      expect(allMarkdown(h.channel).some((markdown) => markdown.includes('正在回滚'))).toBe(true);
+    } finally {
+      rollback.resolve('已切回 `old`，正在重启。');
+      await run;
+    }
+  });
+
   it('rejects upgrade command callbacks', async () => {
     const h = await createHarness();
     h.upgrade.apply.mockResolvedValue('已切换到 `abc123`，正在重启。');
@@ -212,4 +246,23 @@ function lastMarkdown(channel: FakeChannel): string {
   const content = lastContent(channel);
   expect(content.markdown).toBeTypeOf('string');
   return content.markdown as string;
+}
+
+function allMarkdown(channel: FakeChannel): string[] {
+  return channel.sent.flatMap((message) => {
+    const content = message.content as { markdown?: unknown } | undefined;
+    return typeof content?.markdown === 'string' ? [content.markdown] : [];
+  });
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+async function nextTick(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
 }

@@ -833,8 +833,14 @@ async function handleUpgrade(args: string, ctx: CommandContext): Promise<void> {
   const [sub = 'status'] = args.trim().split(/\s+/).filter(Boolean);
   if (sub === 'status') return reply(ctx, await service.status());
   if (sub === 'check') return reply(ctx, await service.check());
-  if (sub === 'apply') return reply(ctx, await service.apply());
-  if (sub === 'rollback') return reply(ctx, await service.rollback());
+  if (sub === 'apply') {
+    await reply(ctx, '正在升级，请稍等；验证通过后会自动重启。');
+    return reply(ctx, await service.apply());
+  }
+  if (sub === 'rollback') {
+    await reply(ctx, '正在回滚，请稍等；切换完成后会自动重启。');
+    return reply(ctx, await service.rollback());
+  }
   await reply(ctx, '用法: `/upgrade [status|check|apply|rollback]`');
 }
 
