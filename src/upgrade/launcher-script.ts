@@ -96,8 +96,16 @@ async function runOnce() {
     const deadline = Date.parse(pendingActivation.deadlineAt);
     const waitMs = Number.isFinite(deadline) ? Math.max(1, deadline - Date.now()) : 60000;
     activationTimer = setTimeout(() => {
+      const latest = readState();
+      if (
+        !latest.pendingActivation ||
+        latest.pendingActivation.commit !== pendingActivation.commit ||
+        latest.pendingActivation.operationId !== pendingActivation.operationId
+      ) {
+        return;
+      }
       child.kill('SIGTERM');
-      rolledBackForTimeout = rollbackState(readState(), 'health-timeout').rolledBack === true;
+      rolledBackForTimeout = rollbackState(latest, 'health-timeout').rolledBack === true;
     }, waitMs);
   }
   const forward = (signal) => child.kill(signal);

@@ -28,9 +28,24 @@ describe('upgrade launcher script', () => {
 
     expect(script).toContain('rolledBackForTimeout');
     expect(script).toContain(
-      "rolledBackForTimeout = rollbackState(readState(), 'health-timeout').rolledBack === true;",
+      "rolledBackForTimeout = rollbackState(latest, 'health-timeout').rolledBack === true;",
     );
     expect(script).toContain("if (rolledBackForTimeout) return 'retry';");
+  });
+
+  it('checks matching pending activation before timeout rollback', () => {
+    const script = buildUpgradeLauncherScript({
+      profile: 'codex-dev',
+      channelHome: '/tmp/lark-home',
+      fallbackNodePath: '/usr/bin/node',
+      fallbackBridgeEntryPath: '/repo/bin/lark-channel-bridge.mjs',
+    });
+
+    expect(script).toContain('const latest = readState();');
+    expect(script).toContain('!latest.pendingActivation');
+    expect(script).toContain('latest.pendingActivation.commit !== pendingActivation.commit');
+    expect(script).toContain('latest.pendingActivation.operationId !== pendingActivation.operationId');
+    expect(script).toContain('return;');
   });
 
   it('retries after early child exit only when rollback switches to a previous release', () => {
