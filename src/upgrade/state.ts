@@ -148,10 +148,29 @@ function normalizeUpgradeState(input: unknown): UpgradeState {
 
 function serializeUpgradeState(state: UpgradeState): UpgradeState {
   return {
-    ...(isReleaseRef(state.current) ? { current: state.current } : {}),
-    ...(isReleaseRef(state.previous) ? { previous: state.previous } : {}),
+    ...(isReleaseRef(state.current) ? { current: serializeReleaseRef(state.current) } : {}),
+    ...(isReleaseRef(state.previous) ? { previous: serializeReleaseRef(state.previous) } : {}),
     ...(isPendingActivation(state.pendingActivation) ? { pendingActivation: state.pendingActivation } : {}),
-    ...(isLastOperation(state.lastOperation) ? { lastOperation: state.lastOperation } : {}),
+    ...(isLastOperation(state.lastOperation) ? { lastOperation: serializeLastOperation(state.lastOperation) } : {}),
+  };
+}
+
+function serializeReleaseRef(value: UpgradeReleaseRef): UpgradeReleaseRef {
+  return {
+    commit: value.commit,
+    path: value.path,
+    ...(typeof value.activatedAt === 'string' ? { activatedAt: value.activatedAt } : {}),
+  };
+}
+
+function serializeLastOperation(value: UpgradeLastOperation): UpgradeLastOperation {
+  return {
+    kind: value.kind,
+    status: value.status,
+    stage: value.stage,
+    message: value.message,
+    ...(typeof value.logPath === 'string' ? { logPath: value.logPath } : {}),
+    at: value.at,
   };
 }
 

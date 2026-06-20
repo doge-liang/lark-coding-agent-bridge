@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -58,7 +58,19 @@ describe('upgrade state store', () => {
       deadlineAt: '2026-06-20T00:01:00.000Z',
     });
 
-    expect(clearPendingActivation(next, new Date('2026-06-20T00:00:30.000Z')).pendingActivation).toBeUndefined();
+    const cleared = clearPendingActivation(next, new Date('2026-06-20T00:00:30.000Z'));
+    expect(cleared.pendingActivation).toBeUndefined();
+    expect(cleared.current).toEqual({
+      commit: 'new',
+      path: '/new',
+      activatedAt: '2026-06-20T00:00:30.000Z',
+    });
+    expect(cleared.lastOperation).toMatchObject({
+      kind: 'apply',
+      status: 'ok',
+      stage: 'activation',
+      message: 'activation healthy',
+    });
   });
 
   it('rolls back current to previous and records last operation', () => {
@@ -90,15 +102,65 @@ describe('upgrade state store', () => {
     const root = await tempRoot();
     const lockFile = join(root, 'state.lock');
     const order: string[] = [];
-
-    await withUpgradeLock(lockFile, async () => {
-      order.push('first');
+    let releaseFirst!: () => void;
+    let firstEntered!: () => void;
+    const firstRelease = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
     });
-    await withUpgradeLock(lockFile, async () => {
-      order.push('second');
+    const firstEntry = new Promise<void>((resolve) => {
+      firstEntered = resolve;
     });
 
-    expect(order).toEqual(['first', 'second']);
+    const first = withUpgradeLock(lockFile, async () => {
+      order.push('first-enter');
+      firstEntered();
+      await firstRelease;
+      order.push('first-exit');
+    });
+
+    await firstEntry;
+    let secondEntered = false;
+    const second = withUpgradeLock(lockFile, async () => {
+      secondEntered = true;
+      order.push('second-enter');
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(secondEntered).toBe(false);
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(order).toEqual(['first-enter', 'first-exit', 'second-enter']);
+  });
+
+  it('drops malformed optional fields when loading state', async () => {
+    const root = await tempRoot();
+    const stateFile = join(root, 'state.json');
+    await writeFile(
+      stateFile,
+      JSON.stringify({
+        current: { commit: 'abc123', path: '/releases/abc123', activatedAt: 123 },
+        lastOperation: {
+          kind: 'apply',
+          status: 'ok',
+          stage: 'activation',
+          message: 'activation healthy',
+          logPath: 123,
+          at: '2026-06-20T00:00:30.000Z',
+        },
+      }),
+    );
+
+    await expect(loadUpgradeState(stateFile)).resolves.toEqual({
+      current: { commit: 'abc123', path: '/releases/abc123' },
+      lastOperation: {
+        kind: 'apply',
+        status: 'ok',
+        stage: 'activation',
+        message: 'activation healthy',
+        at: '2026-06-20T00:00:30.000Z',
+      },
+    });
   });
 });
 
