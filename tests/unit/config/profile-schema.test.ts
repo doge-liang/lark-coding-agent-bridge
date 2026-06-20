@@ -7,6 +7,10 @@ import {
   createDefaultProfileConfig,
   normalizeProfileConfig,
 } from '../../../src/config/profile-schema';
+import {
+  createRootConfig,
+  formatRootConfig,
+} from '../../../src/config/profile-store';
 
 const app = {
   id: 'cli_test',
@@ -133,6 +137,66 @@ describe('profile schema', () => {
     expect(cfg.larkCli).toEqual({ identityPreset: 'bot-only' });
     expect(cfg.larkCli).not.toHaveProperty('configSource');
     expect(cfg.larkCli).not.toHaveProperty('workspaceMode');
+  });
+
+  it('defaults controlled self-update to release branch with fast verification', () => {
+    const cfg = createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: { app },
+    });
+
+    expect(cfg.upgrade).toEqual({
+      enabled: false,
+      remote: 'origin',
+      branch: 'release',
+      requireTests: false,
+      healthTimeoutMs: 60_000,
+      retainReleases: 3,
+    });
+  });
+
+  it('normalizes upgrade config with safe fallbacks', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      upgrade: {
+        enabled: true,
+        remote: 'upstream',
+        branch: 'stable',
+        requireTests: true,
+        healthTimeoutMs: 120_000,
+        retainReleases: 5,
+      },
+    });
+
+    expect(cfg.upgrade).toEqual({
+      enabled: true,
+      remote: 'upstream',
+      branch: 'stable',
+      requireTests: true,
+      healthTimeoutMs: 120_000,
+      retainReleases: 5,
+    });
+  });
+
+  it('serializes upgrade config into root config files', async () => {
+    const cfg = createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: { app },
+    });
+    cfg.upgrade = {
+      enabled: true,
+      remote: 'origin',
+      branch: 'release',
+      requireTests: true,
+      healthTimeoutMs: 90_000,
+      retainReleases: 4,
+    };
+
+    const text = formatRootConfig(createRootConfig('claude', cfg));
+
+    expect(JSON.parse(text).profiles.claude.upgrade).toEqual(cfg.upgrade);
   });
 
   it('normalizes lark-cli user identity import state without preserving invalid fields', () => {

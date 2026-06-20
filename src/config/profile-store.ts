@@ -59,6 +59,7 @@ type StoredProfileConfig = Pick<
   | 'attachments'
   | 'comments'
   | 'larkCli'
+  | 'upgrade'
 >;
 
 type StoredRootConfig = Omit<RootConfig, 'preferences' | 'profiles'> & {
@@ -96,6 +97,7 @@ function serializeProfileConfig(profile: ProfileConfig): StoredProfileConfig {
     attachments: profile.attachments,
     comments: {},
     larkCli: profile.larkCli,
+    upgrade: profile.upgrade,
   };
 }
 

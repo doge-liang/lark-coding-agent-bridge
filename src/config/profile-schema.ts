@@ -74,6 +74,15 @@ export interface LarkCliConfig {
   };
 }
 
+export interface UpgradeConfig {
+  enabled: boolean;
+  remote: string;
+  branch: string;
+  requireTests: boolean;
+  healthTimeoutMs: number;
+  retainReleases: number;
+}
+
 export interface ProfileConfig {
   schemaVersion: 2;
   agentKind: AgentKind;
@@ -93,6 +102,7 @@ export interface ProfileConfig {
   attachments: AttachmentConfig;
   comments: CommentConfig;
   larkCli: LarkCliConfig;
+  upgrade: UpgradeConfig;
 }
 
 export interface RootConfig {
@@ -153,6 +163,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     attachments?: Partial<AttachmentConfig>;
     comments?: unknown;
     larkCli?: unknown;
+    upgrade?: unknown;
   };
 
   if (raw.schemaVersion !== 2) {
@@ -179,6 +190,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const workspaces = normalizeWorkspaces(raw.workspaces);
   const comments = normalizeComments(raw.comments);
   const larkCli = normalizeLarkCli(raw.larkCli);
+  const upgrade = normalizeUpgrade(raw.upgrade);
 
   return {
     schemaVersion: 2,
@@ -202,6 +214,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     },
     comments,
     larkCli,
+    upgrade,
   };
 }
 
@@ -304,6 +317,42 @@ function normalizeLarkCli(input: unknown): LarkCliConfig {
     identityPreset,
     ...(localUserImport ? { localUserImport } : {}),
   };
+}
+
+function normalizeUpgrade(input: unknown): UpgradeConfig {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return defaultUpgradeConfig();
+  }
+  const raw = input as Record<string, unknown>;
+  const remote = nonEmptyString(raw.remote, 'origin');
+  const branch = nonEmptyString(raw.branch, 'release');
+  return {
+    enabled: raw.enabled === true,
+    remote,
+    branch,
+    requireTests: raw.requireTests === true,
+    healthTimeoutMs: positiveInt(raw.healthTimeoutMs, 60_000),
+    retainReleases: positiveInt(raw.retainReleases, 3),
+  };
+}
+
+function defaultUpgradeConfig(): UpgradeConfig {
+  return {
+    enabled: false,
+    remote: 'origin',
+    branch: 'release',
+    requireTests: false,
+    healthTimeoutMs: 60_000,
+    retainReleases: 3,
+  };
+}
+
+function nonEmptyString(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+function positiveInt(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 function normalizeLarkCliUserImport(input: unknown): LarkCliConfig['localUserImport'] | undefined {
