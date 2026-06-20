@@ -1,0 +1,109 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  clearPendingActivation,
+  loadUpgradeState,
+  markActivationRolledBack,
+  saveUpgradeState,
+  setPendingActivation,
+  withUpgradeLock,
+} from '../../../src/upgrade/state';
+
+const roots: string[] = [];
+
+describe('upgrade state store', () => {
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  it('loads empty state for a missing file', async () => {
+    const root = await tempRoot();
+    await expect(loadUpgradeState(join(root, 'state.json'))).resolves.toEqual({});
+  });
+
+  it('saves and reloads state atomically', async () => {
+    const root = await tempRoot();
+    const stateFile = join(root, 'state.json');
+    await saveUpgradeState(stateFile, {
+      current: { commit: 'abc123', path: '/releases/abc123', activatedAt: '2026-06-20T00:00:00.000Z' },
+    });
+
+    await expect(loadUpgradeState(stateFile)).resolves.toEqual({
+      current: { commit: 'abc123', path: '/releases/abc123', activatedAt: '2026-06-20T00:00:00.000Z' },
+    });
+  });
+
+  it('sets and clears pending activation', () => {
+    const next = setPendingActivation(
+      { current: { commit: 'old', path: '/old' } },
+      {
+        commit: 'new',
+        path: '/new',
+        previousCommit: 'old',
+        previousPath: '/old',
+        now: new Date('2026-06-20T00:00:00.000Z'),
+        healthTimeoutMs: 60_000,
+        operationId: 'op-1',
+      },
+    );
+
+    expect(next.current).toEqual({ commit: 'new', path: '/new' });
+    expect(next.previous).toEqual({ commit: 'old', path: '/old' });
+    expect(next.pendingActivation).toEqual({
+      commit: 'new',
+      operationId: 'op-1',
+      startedAt: '2026-06-20T00:00:00.000Z',
+      deadlineAt: '2026-06-20T00:01:00.000Z',
+    });
+
+    expect(clearPendingActivation(next, new Date('2026-06-20T00:00:30.000Z')).pendingActivation).toBeUndefined();
+  });
+
+  it('rolls back current to previous and records last operation', () => {
+    const rolledBack = markActivationRolledBack(
+      {
+        current: { commit: 'new', path: '/new' },
+        previous: { commit: 'old', path: '/old' },
+        pendingActivation: {
+          commit: 'new',
+          operationId: 'op-1',
+          startedAt: '2026-06-20T00:00:00.000Z',
+          deadlineAt: '2026-06-20T00:01:00.000Z',
+        },
+      },
+      'health-timeout',
+    );
+
+    expect(rolledBack.current).toEqual({ commit: 'old', path: '/old' });
+    expect(rolledBack.pendingActivation).toBeUndefined();
+    expect(rolledBack.lastOperation).toMatchObject({
+      kind: 'apply',
+      status: 'rolled_back',
+      stage: 'activation',
+      message: 'health-timeout',
+    });
+  });
+
+  it('serializes access through the lock file', async () => {
+    const root = await tempRoot();
+    const lockFile = join(root, 'state.lock');
+    const order: string[] = [];
+
+    await withUpgradeLock(lockFile, async () => {
+      order.push('first');
+    });
+    await withUpgradeLock(lockFile, async () => {
+      order.push('second');
+    });
+
+    expect(order).toEqual(['first', 'second']);
+  });
+});
+
+async function tempRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'upgrade-state-'));
+  roots.push(root);
+  return root;
+}
