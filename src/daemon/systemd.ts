@@ -9,13 +9,18 @@ import {
   systemdUnitName,
   systemdUnitPath,
 } from './paths';
+import { resolveAppPaths } from '../config/app-paths';
 import { paths } from '../config/paths';
+import { writeUpgradeLauncherScript } from '../upgrade/launcher-script';
+import { resolveUpgradePaths } from '../upgrade/paths';
 
 export interface UnitInputs {
   /** Absolute path to the node binary that should run the bridge. */
   nodePath: string;
   /** Absolute path to the bridge CLI entry (the file currently executing). */
   bridgeEntryPath: string;
+  /** Absolute path to the upgrade-aware launcher script. */
+  upgradeLauncherPath: string;
   /** PATH for the daemon process — captured from current shell so child
    * tools (lark-cli, claude) can be resolved by name. systemd user units
    * inherit a minimal env otherwise. */
@@ -48,7 +53,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart="${escape(inputs.nodePath)}" "${escape(inputs.bridgeEntryPath)}" run --profile "${escape(inputs.profile)}"
+ExecStart="${escape(inputs.nodePath)}" "${escape(inputs.upgradeLauncherPath)}" --profile "${escape(inputs.profile)}"
 Restart=always
 RestartSec=5
 StandardOutput=append:${daemonStdoutPath(inputs.profile)}
@@ -66,9 +71,18 @@ export async function writeUnit(profile: string): Promise<void> {
   if (!bridgeEntryPath) {
     throw new Error('cannot determine bridge entry path (process.argv[1] is empty)');
   }
+  const appPaths = resolveAppPaths({ rootDir: paths.rootDir, profile });
+  const upgradePaths = resolveUpgradePaths(appPaths);
+  await writeUpgradeLauncherScript(upgradePaths.launcherFile, {
+    profile,
+    channelHome: paths.rootDir,
+    fallbackNodePath: process.execPath,
+    fallbackBridgeEntryPath: bridgeEntryPath,
+  });
   const content = buildUnit({
     nodePath: process.execPath,
     bridgeEntryPath,
+    upgradeLauncherPath: upgradePaths.launcherFile,
     envPath: process.env.PATH ?? '',
     profile,
     channelHome: paths.rootDir,

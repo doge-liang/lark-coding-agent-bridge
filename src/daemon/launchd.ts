@@ -10,13 +10,18 @@ import {
   launchAgentLabel,
   launchAgentPlistPath,
 } from './paths';
+import { resolveAppPaths } from '../config/app-paths';
 import { paths } from '../config/paths';
+import { writeUpgradeLauncherScript } from '../upgrade/launcher-script';
+import { resolveUpgradePaths } from '../upgrade/paths';
 
 export interface PlistInputs {
   /** Absolute path to the node binary that should run the bridge. */
   nodePath: string;
   /** Absolute path to the bridge CLI entry (the file currently executing). */
   bridgeEntryPath: string;
+  /** Absolute path to the upgrade-aware launcher script. */
+  upgradeLauncherPath: string;
   /** PATH for the daemon process — captured from current shell so child
    * tools (lark-cli, claude) can be resolved by name. launchd defaults
    * to a very minimal PATH otherwise. */
@@ -43,8 +48,7 @@ export function buildPlist(inputs: PlistInputs): string {
     <key>ProgramArguments</key>
     <array>
         <string>${escape(inputs.nodePath)}</string>
-        <string>${escape(inputs.bridgeEntryPath)}</string>
-        <string>run</string>
+        <string>${escape(inputs.upgradeLauncherPath)}</string>
         <string>--profile</string>
         <string>${escape(inputs.profile)}</string>
     </array>
@@ -73,9 +77,18 @@ export async function writePlist(profile: string): Promise<void> {
   if (!bridgeEntryPath) {
     throw new Error('cannot determine bridge entry path (process.argv[1] is empty)');
   }
+  const appPaths = resolveAppPaths({ rootDir: paths.rootDir, profile });
+  const upgradePaths = resolveUpgradePaths(appPaths);
+  await writeUpgradeLauncherScript(upgradePaths.launcherFile, {
+    profile,
+    channelHome: paths.rootDir,
+    fallbackNodePath: process.execPath,
+    fallbackBridgeEntryPath: bridgeEntryPath,
+  });
   const content = buildPlist({
     nodePath: process.execPath,
     bridgeEntryPath,
+    upgradeLauncherPath: upgradePaths.launcherFile,
     envPath: process.env.PATH ?? '',
     profile,
     channelHome: paths.rootDir,

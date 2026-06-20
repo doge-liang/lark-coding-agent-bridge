@@ -9,13 +9,18 @@ import {
   windowsTaskName,
   windowsLauncherCmdPath,
 } from './paths';
+import { resolveAppPaths } from '../config/app-paths';
 import { paths } from '../config/paths';
+import { writeUpgradeLauncherScript } from '../upgrade/launcher-script';
+import { resolveUpgradePaths } from '../upgrade/paths';
 
 export interface LauncherInputs {
   /** Absolute path to node.exe. */
   nodePath: string;
   /** Absolute path to the bridge CLI entry. */
   bridgeEntryPath: string;
+  /** Absolute path to the upgrade-aware launcher script. */
+  upgradeLauncherPath: string;
   /** PATH for the child process; baked into the .cmd via `set PATH=`. */
   envPath: string;
   /** Profile this service instance is pinned to. */
@@ -41,7 +46,7 @@ export function buildLauncherCmd(inputs: LauncherInputs): string {
     '@echo off',
     `set "LARK_CHANNEL_HOME=${inputs.channelHome}"`,
     `set "PATH=${inputs.envPath}"`,
-    `"${inputs.nodePath}" "${inputs.bridgeEntryPath}" run --profile "${inputs.profile}" >> "${daemonStdoutPath(inputs.profile)}" 2>> "${daemonStderrPath(inputs.profile)}"`,
+    `"${inputs.nodePath}" "${inputs.upgradeLauncherPath}" --profile "${inputs.profile}" >> "${daemonStdoutPath(inputs.profile)}" 2>> "${daemonStderrPath(inputs.profile)}"`,
     '',
   ].join('\r\n');
 }
@@ -51,9 +56,18 @@ async function writeLauncherCmd(profile: string): Promise<void> {
   if (!bridgeEntryPath) {
     throw new Error('cannot determine bridge entry path (process.argv[1] is empty)');
   }
+  const appPaths = resolveAppPaths({ rootDir: paths.rootDir, profile });
+  const upgradePaths = resolveUpgradePaths(appPaths);
+  await writeUpgradeLauncherScript(upgradePaths.launcherFile, {
+    profile,
+    channelHome: paths.rootDir,
+    fallbackNodePath: process.execPath,
+    fallbackBridgeEntryPath: bridgeEntryPath,
+  });
   const content = buildLauncherCmd({
     nodePath: process.execPath,
     bridgeEntryPath,
+    upgradeLauncherPath: upgradePaths.launcherFile,
     envPath: process.env.PATH ?? '',
     profile,
     channelHome: paths.rootDir,

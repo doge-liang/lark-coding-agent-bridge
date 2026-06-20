@@ -24,20 +24,22 @@ describe('profile-scoped daemon paths and arguments', () => {
     );
   });
 
-  it('pins launchd, systemd, and schtasks launch commands to run --profile', () => {
+  it('pins launchd, systemd, and schtasks launch commands to the upgrade launcher', () => {
     const inputs = {
       nodePath: '/usr/local/bin/node',
       bridgeEntryPath: '/repo/bin/lark-channel-bridge.mjs',
+      upgradeLauncherPath: '/tmp/lark-channel-home/profiles/codex-dev/upgrades/launcher.mjs',
       envPath: '/usr/local/bin:/usr/bin',
       profile: 'codex-dev',
       channelHome: '/tmp/lark-channel-home',
     };
 
+    expect(buildPlist(inputs)).toContain('<string>/tmp/lark-channel-home/profiles/codex-dev/upgrades/launcher.mjs</string>');
     expect(buildPlist(inputs)).toContain('<string>--profile</string>\n        <string>codex-dev</string>');
     expect(buildPlist(inputs)).toContain('<key>LARK_CHANNEL_HOME</key>\n        <string>/tmp/lark-channel-home</string>');
-    expect(buildUnit(inputs)).toContain('run --profile "codex-dev"');
+    expect(buildUnit(inputs)).toContain('"/usr/local/bin/node" "/tmp/lark-channel-home/profiles/codex-dev/upgrades/launcher.mjs" --profile "codex-dev"');
     expect(buildUnit(inputs)).toContain('Environment="LARK_CHANNEL_HOME=/tmp/lark-channel-home"');
-    expect(buildLauncherCmd(inputs)).toContain('run --profile "codex-dev"');
+    expect(buildLauncherCmd(inputs)).toContain('"/usr/local/bin/node" "/tmp/lark-channel-home/profiles/codex-dev/upgrades/launcher.mjs" --profile "codex-dev"');
     expect(buildLauncherCmd(inputs)).toContain('set "LARK_CHANNEL_HOME=/tmp/lark-channel-home"');
   });
 });
