@@ -149,6 +149,7 @@ describe('Claude slash command visible behavior', () => {
     const help = JSON.stringify(lastContent(h.channel));
     expect(help).toContain('Fake Agent');
     expect(help).toContain('lark-cli 身份策略');
+    expect(help).toContain('/upgrade [status|check|apply|rollback]');
     expect(help).not.toContain('/lark');
     expect(help).not.toContain('交给 Claude');
   });

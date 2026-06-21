@@ -194,6 +194,7 @@ export function helpCard(agentName = 'Agent'): object {
         '- `/exit <id|#>` — 关掉指定 bot(用 `/ps` 看 id/序号)',
         '- `/reconnect` — 强制重连 WebSocket(网络抖动后 bot 没反应时用)',
         `- \`/doctor [描述]\` — 把日志和描述交给 ${escapedAgentName} 自助诊断`,
+        '- `/upgrade [status|check|apply|rollback]` — 管理员私聊执行受控自更新',
         '- `/help` — 本帮助',
         '',
         `其他内容直接交给 ${escapedAgentName}。`,
