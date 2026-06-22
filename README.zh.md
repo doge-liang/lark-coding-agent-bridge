@@ -204,6 +204,7 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 |---|---|
 | `用量` | `/usage` |
 | `状态` | `/status` |
+| `新对话` | `/new` |
 | `新会话` | `/new` |
 | `恢复` | `/resume` |
 | `帮助` | `/help` |

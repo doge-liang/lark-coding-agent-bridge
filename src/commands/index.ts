@@ -205,6 +205,7 @@ const commandAliases = new Map<string, string>([
   ['用量', '/usage'],
   ['恢复', '/resume'],
   ['工作目录', '/ws'],
+  ['新对话', '/new'],
   ['新会话', '/new'],
   ['停止', '/stop'],
   ['配置', '/config'],
