@@ -23,7 +23,15 @@ import {
 import { GROUP_MSG_SCOPE, hasGroupMsgScope } from '../bot/app-scope';
 import { requestScopeGrantLink } from '../bot/wizard';
 import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/managed';
-import { helpCard, resumeCard, statusCard, usageCard, workspacesCard, type UsageCardInfo } from '../card/templates';
+import {
+  helpCard,
+  menuCard,
+  resumeCard,
+  statusCard,
+  usageCard,
+  workspacesCard,
+  type UsageCardInfo,
+} from '../card/templates';
 import type { AppConfig, AppPreferences, MessageReplyMode, TenantBrand } from '../config/schema';
 import {
   getAgentStopGraceMs,
@@ -174,6 +182,7 @@ const handlers: Record<string, Handler> = {
   '/resume': handleResume,
   '/status': handleStatus,
   '/usage': handleUsage,
+  '/menu': handleMenu,
   '/help': handleHelp,
   '/account': handleAccount,
   '/config': handleConfig,
@@ -188,6 +197,19 @@ const handlers: Record<string, Handler> = {
   '/remove': handleRemove,
   '/upgrade': handleUpgrade,
 };
+
+const commandAliases = new Map<string, string>([
+  ['菜单', '/menu'],
+  ['帮助', '/help'],
+  ['状态', '/status'],
+  ['用量', '/usage'],
+  ['恢复', '/resume'],
+  ['工作目录', '/ws'],
+  ['新会话', '/new'],
+  ['停止', '/stop'],
+  ['配置', '/config'],
+  ['升级检查', '/upgrade check'],
+]);
 
 /**
  * Commands that can mutate credentials, lifecycle, filesystem reach, or
@@ -214,8 +236,9 @@ function isAdminCommand(cmd: string): boolean {
 
 export async function tryHandleCommand(ctx: CommandContext): Promise<boolean> {
   const trimmed = ctx.msg.content.trim();
-  if (!trimmed.startsWith('/')) return false;
-  const parts = trimmed.split(/\s+/);
+  const commandText = commandAliases.get(trimmed) ?? trimmed;
+  if (!commandText.startsWith('/')) return false;
+  const parts = commandText.split(/\s+/);
   const cmd = parts[0] ?? '';
   const args = parts.slice(1).join(' ');
   const h = handlers[cmd];
@@ -851,6 +874,10 @@ async function handleUsage(_args: string, ctx: CommandContext): Promise<void> {
     return;
   }
   await ctx.channel.send(ctx.msg.chatId, { card: usageCard(formatUsageCardInfo(usage)) }, { replyTo: ctx.msg.messageId });
+}
+
+async function handleMenu(_args: string, ctx: CommandContext): Promise<void> {
+  await ctx.channel.send(ctx.msg.chatId, { card: menuCard(ctx.agent.displayName) }, { replyTo: ctx.msg.messageId });
 }
 
 function codexUsageHome(ctx: CommandContext): string | undefined {

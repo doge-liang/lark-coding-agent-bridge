@@ -178,6 +178,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/resume` | Resume compatible history for the same agent, working directory, and permission mode |
 | `/status` | Show profile, agent, working directory, session, lark-cli identity, and run state |
 | `/usage` | Show current Codex session token usage and context window |
+| `/menu` | Show suggested Feishu / Lark bot floating-menu configuration |
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
 | `/invite user @name` | Allow a user to use the bot in DMs |
 | `/invite admin @name` | Add an access-control admin |
@@ -194,6 +195,25 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/help` | Help card |
 
 DMs do not require an @ mention. Groups and topic groups require `@bot` by default; `@all` is ignored. Cloud-doc comments in supported document types run when the bot is mentioned.
+
+### Feishu / Lark floating menu
+
+Bot custom menus are configured and published in the Feishu / Lark Developer Console. For DMs, choose the **floating menu** display style and set each item action to **send text message**. The bridge includes these exact text aliases, so menu buttons can use readable labels:
+
+| Menu text | Equivalent command |
+|---|---|
+| `用量` | `/usage` |
+| `状态` | `/status` |
+| `新会话` | `/new` |
+| `恢复` | `/resume` |
+| `帮助` | `/help` |
+| `菜单` | `/menu` |
+| `工作目录` | `/ws` |
+| `配置` | `/config` |
+| `升级检查` | `/upgrade check` |
+| `停止` | `/stop` |
+
+Send `/menu` in Feishu / Lark for a configuration card. Floating menus are DM-only and require Feishu / Lark client 7.22 or later; after publishing an app version, it may take about 5 minutes to appear.
 
 ## lark-cli identity policy
 

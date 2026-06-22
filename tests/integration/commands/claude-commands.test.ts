@@ -149,9 +149,26 @@ describe('Claude slash command visible behavior', () => {
     const help = JSON.stringify(lastContent(h.channel));
     expect(help).toContain('Fake Agent');
     expect(help).toContain('lark-cli 身份策略');
+    expect(help).toContain('/menu');
     expect(help).toContain('/upgrade [status|check|apply|rollback]');
     expect(help).not.toContain('/lark');
     expect(help).not.toContain('交给 Claude');
+  });
+
+  it('handles floating menu text aliases as commands', async () => {
+    const h = await createHarness();
+
+    await expect(h.run('状态')).resolves.toBe(true);
+    expect(lastContent(h.channel)).toHaveProperty('card');
+    expect(JSON.stringify(lastContent(h.channel))).toContain('当前状态');
+
+    await expect(h.run('菜单')).resolves.toBe(true);
+    const menu = JSON.stringify(lastContent(h.channel));
+    expect(menu).toContain('飞书悬浮菜单');
+    expect(menu).toContain('用量');
+    expect(menu).toContain('/usage');
+
+    await expect(h.run('不是菜单命令')).resolves.toBe(false);
   });
 
   it('reports lark-cli user-ready for structured user records', async () => {

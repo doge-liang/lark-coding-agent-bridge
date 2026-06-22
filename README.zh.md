@@ -178,6 +178,7 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 | `/resume` | 恢复同 agent、工作目录、权限模式兼容的历史会话 |
 | `/status` | 查看 profile、agent、工作目录、会话、lark-cli 身份和运行状态 |
 | `/usage` | 查看当前 Codex session 的 token 用量和上下文窗口 |
+| `/menu` | 查看飞书机器人悬浮菜单配置建议 |
 | `/config` | 调整展示偏好、访问控制和 lark-cli 身份策略 |
 | `/invite user @某人` | 允许用户私聊使用 bot |
 | `/invite admin @某人` | 添加访问控制管理员 |
@@ -194,6 +195,25 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 | `/help` | 帮助卡片 |
 
 私聊不需要 @。群和话题群默认必须 `@bot`；`@all` 会被忽略。支持的云文档评论里 @bot 就会触发回复。
+
+### 飞书悬浮菜单
+
+飞书机器人自定义菜单需要在开放平台开发者后台配置并发布。单聊里推荐选择 **悬浮菜单**，菜单项响应动作选择 **发送文字消息**。bridge 内置了以下精确中文别名，因此菜单按钮可以展示中文文案：
+
+| 菜单文案 | 等价命令 |
+|---|---|
+| `用量` | `/usage` |
+| `状态` | `/status` |
+| `新会话` | `/new` |
+| `恢复` | `/resume` |
+| `帮助` | `/help` |
+| `菜单` | `/menu` |
+| `工作目录` | `/ws` |
+| `配置` | `/config` |
+| `升级检查` | `/upgrade check` |
+| `停止` | `/stop` |
+
+在飞书里发送 `/menu` 可以查看完整配置卡片。悬浮菜单仅支持单聊，客户端需为飞书 7.22 及以上；应用版本发布后通常需要等待约 5 分钟生效。
 
 ## lark-cli 身份策略
 
