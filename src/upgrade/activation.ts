@@ -6,6 +6,7 @@ import {
   saveUpgradeState,
   withUpgradeLock,
   type UpgradeActivationNotify,
+  type UpgradeLockOptions,
 } from './state';
 
 export interface UpgradeActivationHealthyResult {
@@ -13,10 +14,19 @@ export interface UpgradeActivationHealthyResult {
   notify?: UpgradeActivationNotify;
 }
 
+export interface UpgradeActivationHealthyOptions {
+  lock?: UpgradeLockOptions;
+}
+
+const DEFAULT_ACTIVATION_LOCK_OPTIONS: UpgradeLockOptions = {
+  retries: { retries: 60, minTimeout: 500, maxTimeout: 1_000 },
+};
+
 export async function markUpgradeActivationHealthy(
   appPaths: Pick<AppPaths, 'profileDir'>,
   commit: string | undefined,
   now = new Date(),
+  options: UpgradeActivationHealthyOptions = {},
 ): Promise<UpgradeActivationHealthyResult | undefined> {
   if (!commit) return undefined;
   const upgradePaths = resolveUpgradePaths(appPaths);
@@ -29,5 +39,5 @@ export async function markUpgradeActivationHealthy(
     };
     await saveUpgradeState(upgradePaths.stateFile, clearPendingActivation(state, now));
     return result;
-  });
+  }, options.lock ?? DEFAULT_ACTIVATION_LOCK_OPTIONS);
 }

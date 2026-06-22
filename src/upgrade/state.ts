@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import * as lockfile from 'proper-lockfile';
+import type { LockOptions } from 'proper-lockfile';
 import { writeFileAtomic } from '../platform/atomic-write';
 
 export interface UpgradeReleaseRef {
@@ -38,6 +39,12 @@ export interface UpgradeState {
   lastOperation?: UpgradeLastOperation;
 }
 
+export interface UpgradeLockOptions {
+  retries?: LockOptions['retries'];
+  staleMs?: number;
+  updateMs?: number;
+}
+
 export async function loadUpgradeState(stateFile: string): Promise<UpgradeState> {
   try {
     const parsed = JSON.parse(await readFile(stateFile, 'utf8')) as unknown;
@@ -54,15 +61,19 @@ export async function saveUpgradeState(stateFile: string, state: UpgradeState): 
   });
 }
 
-export async function withUpgradeLock<T>(lockFile: string, fn: () => Promise<T>): Promise<T> {
+export async function withUpgradeLock<T>(
+  lockFile: string,
+  fn: () => Promise<T>,
+  options: UpgradeLockOptions = {},
+): Promise<T> {
   await mkdir(dirname(lockFile), { recursive: true });
   await writeFile(lockFile, '', { flag: 'a', mode: 0o600 });
   await chmod(lockFile, 0o600).catch(() => {});
   const release = await lockfile.lock(lockFile, {
     realpath: false,
-    stale: 30_000,
-    update: 10_000,
-    retries: { retries: 10, minTimeout: 10, maxTimeout: 100 },
+    stale: options.staleMs ?? 30_000,
+    update: options.updateMs ?? 10_000,
+    retries: options.retries ?? { retries: 10, minTimeout: 10, maxTimeout: 100 },
   });
   try {
     return await fn();

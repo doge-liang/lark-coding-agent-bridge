@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { resolveAppPaths } from '../../../src/config/app-paths';
 import { markUpgradeActivationHealthy } from '../../../src/upgrade/activation';
 import { resolveUpgradePaths } from '../../../src/upgrade/paths';
-import { loadUpgradeState, saveUpgradeState } from '../../../src/upgrade/state';
+import { loadUpgradeState, saveUpgradeState, withUpgradeLock } from '../../../src/upgrade/state';
 
 const roots: string[] = [];
 
@@ -64,6 +64,45 @@ describe('upgrade activation health', () => {
       notify: { chatId: 'oc_upgrade', messageId: 'om_upgrade' },
     });
     await expect(markUpgradeActivationHealthy(appPaths, 'abc123')).resolves.toBeUndefined();
+  });
+
+  it('waits for the upgrade state lock before marking activation healthy', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'upgrade-activation-'));
+    roots.push(root);
+    const appPaths = resolveAppPaths({ rootDir: root, profile: 'claude' });
+    const upgradePaths = resolveUpgradePaths(appPaths);
+    await saveUpgradeState(upgradePaths.stateFile, {
+      current: { commit: 'abc123', path: '/releases/abc123' },
+      pendingActivation: {
+        commit: 'abc123',
+        operationId: 'op-1',
+        startedAt: '2026-06-20T00:00:00.000Z',
+        deadlineAt: '2026-06-20T00:01:00.000Z',
+      },
+    });
+
+    let releaseFirstLock!: () => void;
+    let firstLockAcquired!: () => void;
+    const firstLockReady = new Promise<void>((resolve) => {
+      firstLockAcquired = resolve;
+    });
+    const firstLock = withUpgradeLock(upgradePaths.lockFile, async () => {
+      firstLockAcquired();
+      await new Promise<void>((resolve) => {
+        releaseFirstLock = resolve;
+      });
+    });
+    await firstLockReady;
+
+    const activation = markUpgradeActivationHealthy(appPaths, 'abc123', new Date('2026-06-20T00:00:30.000Z'), {
+      lock: { retries: { retries: 20, minTimeout: 10, maxTimeout: 10 }, staleMs: 2_000, updateMs: 1_000 },
+    });
+    releaseFirstLock();
+    await firstLock;
+
+    await expect(activation).resolves.toEqual({ commit: 'abc123' });
+    const state = await loadUpgradeState(upgradePaths.stateFile);
+    expect(state.pendingActivation).toBeUndefined();
   });
 
   it('does nothing when there is no matching pending activation', async () => {
