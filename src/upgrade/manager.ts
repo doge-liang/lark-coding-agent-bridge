@@ -10,6 +10,7 @@ import {
   saveUpgradeState,
   setPendingActivation,
   withUpgradeLock,
+  type UpgradeActivationNotify,
   type UpgradeLastOperation,
   type UpgradeState,
 } from './state';
@@ -37,6 +38,7 @@ export interface UpgradeManagerOptions {
   currentPath: string;
   runCommand?: UpgradeRunCommand;
   restartService: () => Promise<ServiceResult> | ServiceResult;
+  activationNotify?: UpgradeActivationNotify;
   now?: () => Date;
   operationId?: () => string;
 }
@@ -188,6 +190,7 @@ export class UpgradeManager {
           now: this.now(),
           healthTimeoutMs: this.options.profileConfig.upgrade.healthTimeoutMs,
           operationId,
+          ...(this.options.activationNotify ? { notify: this.options.activationNotify } : {}),
         });
         next.lastOperation = {
           kind: 'apply',

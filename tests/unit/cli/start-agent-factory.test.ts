@@ -106,6 +106,15 @@ describe('start runtime agent factory', () => {
     expect(catchIndex).toBeGreaterThan(markIndex);
   });
 
+  it('sends upgrade activation notification after the healthy marker is written', async () => {
+    const source = await readFile(join(process.cwd(), 'src/cli/commands/start.ts'), 'utf8');
+    const markIndex = source.indexOf('const activation = await markUpgradeActivationHealthy');
+    const notifyIndex = source.indexOf('await sendUpgradeActivationNotification', markIndex);
+
+    expect(markIndex).toBeGreaterThanOrEqual(0);
+    expect(notifyIndex).toBeGreaterThan(markIndex);
+  });
+
   it('rejects reconnect when a profile changes agent kind in place', () => {
     expect(() => assertReconnectAgentKindUnchanged('claude', 'codex')).toThrow(/agent kind/i);
     expect(() => assertReconnectAgentKindUnchanged('codex', 'codex')).not.toThrow();

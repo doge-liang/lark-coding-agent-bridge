@@ -9,11 +9,17 @@ export interface UpgradeReleaseRef {
   activatedAt?: string;
 }
 
+export interface UpgradeActivationNotify {
+  chatId: string;
+  messageId?: string;
+}
+
 export interface PendingActivation {
   commit: string;
   operationId: string;
   startedAt: string;
   deadlineAt: string;
+  notify?: UpgradeActivationNotify;
 }
 
 export interface UpgradeLastOperation {
@@ -75,6 +81,7 @@ export function setPendingActivation(
     now: Date;
     healthTimeoutMs: number;
     operationId: string;
+    notify?: UpgradeActivationNotify;
   },
 ): UpgradeState {
   const startedAt = input.now.toISOString();
@@ -93,6 +100,7 @@ export function setPendingActivation(
       operationId: input.operationId,
       startedAt,
       deadlineAt,
+      ...(input.notify ? { notify: input.notify } : {}),
     },
   };
 }
@@ -152,7 +160,9 @@ function serializeUpgradeState(state: UpgradeState): UpgradeState {
   return {
     ...(isReleaseRef(state.current) ? { current: serializeReleaseRef(state.current) } : {}),
     ...(isReleaseRef(state.previous) ? { previous: serializeReleaseRef(state.previous) } : {}),
-    ...(isPendingActivation(state.pendingActivation) ? { pendingActivation: state.pendingActivation } : {}),
+    ...(isPendingActivation(state.pendingActivation)
+      ? { pendingActivation: serializePendingActivation(state.pendingActivation) }
+      : {}),
     ...(isLastOperation(state.lastOperation) ? { lastOperation: serializeLastOperation(state.lastOperation) } : {}),
   };
 }
@@ -162,6 +172,23 @@ function serializeReleaseRef(value: UpgradeReleaseRef): UpgradeReleaseRef {
     commit: value.commit,
     path: value.path,
     ...(typeof value.activatedAt === 'string' ? { activatedAt: value.activatedAt } : {}),
+  };
+}
+
+function serializePendingActivation(value: PendingActivation): PendingActivation {
+  return {
+    commit: value.commit,
+    operationId: value.operationId,
+    startedAt: value.startedAt,
+    deadlineAt: value.deadlineAt,
+    ...(isActivationNotify(value.notify) ? { notify: serializeActivationNotify(value.notify) } : {}),
+  };
+}
+
+function serializeActivationNotify(value: UpgradeActivationNotify): UpgradeActivationNotify {
+  return {
+    chatId: value.chatId,
+    ...(typeof value.messageId === 'string' ? { messageId: value.messageId } : {}),
   };
 }
 
@@ -191,6 +218,12 @@ function isPendingActivation(value: unknown): value is PendingActivation {
     typeof raw.startedAt === 'string' &&
     typeof raw.deadlineAt === 'string'
   );
+}
+
+function isActivationNotify(value: unknown): value is UpgradeActivationNotify {
+  if (!value || typeof value !== 'object') return false;
+  const raw = value as Partial<UpgradeActivationNotify>;
+  return typeof raw.chatId === 'string' && (raw.messageId === undefined || typeof raw.messageId === 'string');
 }
 
 function isLastOperation(value: unknown): value is UpgradeLastOperation {

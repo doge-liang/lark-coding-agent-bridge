@@ -37,6 +37,35 @@ describe('upgrade activation health', () => {
     expect(state.lastOperation?.status).toBe('ok');
   });
 
+  it('returns the activation notification target once when the current commit becomes healthy', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'upgrade-activation-'));
+    roots.push(root);
+    const appPaths = resolveAppPaths({ rootDir: root, profile: 'claude' });
+    const upgradePaths = resolveUpgradePaths(appPaths);
+    await saveUpgradeState(upgradePaths.stateFile, {
+      current: { commit: 'abc123', path: '/releases/abc123' },
+      pendingActivation: {
+        commit: 'abc123',
+        operationId: 'op-1',
+        startedAt: '2026-06-20T00:00:00.000Z',
+        deadlineAt: '2026-06-20T00:01:00.000Z',
+        notify: { chatId: 'oc_upgrade', messageId: 'om_upgrade' },
+      },
+    });
+
+    const result = await markUpgradeActivationHealthy(
+      appPaths,
+      'abc123',
+      new Date('2026-06-20T00:00:30.000Z'),
+    );
+
+    expect(result).toEqual({
+      commit: 'abc123',
+      notify: { chatId: 'oc_upgrade', messageId: 'om_upgrade' },
+    });
+    await expect(markUpgradeActivationHealthy(appPaths, 'abc123')).resolves.toBeUndefined();
+  });
+
   it('does nothing when there is no matching pending activation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'upgrade-activation-'));
     roots.push(root);

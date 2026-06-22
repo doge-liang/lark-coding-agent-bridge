@@ -11,6 +11,7 @@ import {
   type UpgradeRollbackResult,
   type UpgradeStatus,
 } from './manager';
+import type { UpgradeActivationNotify } from './state';
 
 export interface UpgradeCommandService {
   status(): Promise<string>;
@@ -29,12 +30,20 @@ export function createUpgradeCommandService(ctx: CommandContext): UpgradeCommand
     currentPath: currentBridgeRoot(),
     restartService: () =>
       adapter ? adapter.restart() : { ok: false, stderr: '当前系统不支持后台 service restart' },
+    activationNotify: activationNotifyTarget(ctx),
   });
   return {
     status: async () => formatStatus(await manager.status()),
     check: async () => formatCheck(await manager.check()),
     apply: async () => formatApply(await manager.apply()),
     rollback: async () => formatRollback(await manager.rollback()),
+  };
+}
+
+function activationNotifyTarget(ctx: CommandContext): UpgradeActivationNotify {
+  return {
+    chatId: ctx.msg.chatId,
+    ...(ctx.msg.messageId ? { messageId: ctx.msg.messageId } : {}),
   };
 }
 

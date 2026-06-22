@@ -102,7 +102,8 @@ describe('UpgradeManager', () => {
   });
 
   it('writes pending activation and requests restart after verification passes', async () => {
-    const h = await harness({ enabled: true });
+    const notify = { chatId: 'oc_upgrade', messageId: 'om_upgrade' };
+    const h = await harness({ enabled: true, activationNotify: notify });
     await saveUpgradeState(h.paths.stateFile, {
       current: { commit: 'old', path: h.currentPath },
     });
@@ -126,6 +127,7 @@ describe('UpgradeManager', () => {
     expect(state.current?.commit).toBe('new');
     expect(state.previous?.commit).toBe('old');
     expect(state.pendingActivation?.commit).toBe('new');
+    expect(state.pendingActivation?.notify).toEqual(notify);
     expect(h.restart).toHaveBeenCalledTimes(1);
   });
 
@@ -194,7 +196,11 @@ describe('runUpgradeCommand', () => {
   });
 });
 
-async function harness(overrides: Partial<ReturnType<typeof createDefaultProfileConfig>['upgrade']> = {}) {
+async function harness(
+  overrides: Partial<ReturnType<typeof createDefaultProfileConfig>['upgrade']> & {
+    activationNotify?: { chatId: string; messageId?: string };
+  } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), 'upgrade-manager-'));
   roots.push(root);
   const currentPath = join(root, 'current');
@@ -206,7 +212,8 @@ async function harness(overrides: Partial<ReturnType<typeof createDefaultProfile
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
   });
-  profileConfig.upgrade = { ...profileConfig.upgrade, ...overrides };
+  const { activationNotify, ...upgradeOverrides } = overrides;
+  profileConfig.upgrade = { ...profileConfig.upgrade, ...upgradeOverrides };
   const paths = resolveUpgradePaths(appPaths);
   const run = vi.fn();
   const restart = vi.fn();
@@ -218,6 +225,7 @@ async function harness(overrides: Partial<ReturnType<typeof createDefaultProfile
     restartService: restart,
     now: () => new Date('2026-06-20T00:00:00.000Z'),
     operationId: () => 'op-1',
+    ...(activationNotify ? { activationNotify } : {}),
   });
   return { root, appPaths, profileConfig, paths, currentPath, run, restart, manager };
 }

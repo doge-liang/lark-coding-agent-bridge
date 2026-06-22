@@ -44,7 +44,7 @@ import { resolveProfileRuntime } from '../../runtime/profile-runtime';
 import { refreshOwnerControls } from '../../policy/owner';
 import { SessionStore } from '../../session/store';
 import { SessionCatalog } from '../../session/catalog';
-import { markUpgradeActivationHealthy } from '../../upgrade/activation';
+import { markUpgradeActivationHealthy, type UpgradeActivationHealthyResult } from '../../upgrade/activation';
 import { resolveUpgradePaths } from '../../upgrade/paths';
 import { loadUpgradeState } from '../../upgrade/state';
 import { WorkspaceStore } from '../../workspace/store';
@@ -345,7 +345,8 @@ export async function runStart(opts: StartOptions): Promise<void> {
           );
         }
         try {
-          await markUpgradeActivationHealthy(appPaths, await currentUpgradeCommit(appPaths));
+          const activation = await markUpgradeActivationHealthy(appPaths, await currentUpgradeCommit(appPaths));
+          await sendUpgradeActivationNotification(bridge.channel, activation);
         } catch (err) {
           log.warn('upgrade', 'activation-mark-failed', { err: String(err) });
         }
@@ -396,6 +397,22 @@ async function checkRuntimeAgentAvailability(agent: AgentAdapter): Promise<Agent
 async function currentUpgradeCommit(appPaths: Pick<AppPaths, 'profileDir'>): Promise<string | undefined> {
   const state = await loadUpgradeState(resolveUpgradePaths(appPaths).stateFile);
   return state.current?.commit;
+}
+
+async function sendUpgradeActivationNotification(
+  channel: BridgeChannel['channel'],
+  activation: UpgradeActivationHealthyResult | undefined,
+): Promise<void> {
+  if (!activation?.notify) return;
+  try {
+    await channel.send(
+      activation.notify.chatId,
+      { markdown: `✅ 升级重启成功。\n当前版本: \`${activation.commit.slice(0, 12)}\`` },
+      activation.notify.messageId ? { replyTo: activation.notify.messageId } : undefined,
+    );
+  } catch (err) {
+    log.warn('upgrade', 'activation-notify-failed', { err: String(err) });
+  }
 }
 
 export function assertReconnectAgentKindUnchanged(
