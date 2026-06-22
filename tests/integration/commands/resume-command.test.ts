@@ -273,15 +273,20 @@ describe('agent-aware resume commands', () => {
 
     await expect(h.run('/usage')).resolves.toBe(true);
 
-    const usage = lastMarkdown(h.channel);
-    expect(usage).toContain('Codex usage');
-    expect(usage).toContain('当前上下文');
-    expect(usage).toContain('62,088 / 258,400');
+    const usage = lastContentString(h.channel);
+    expect(usage).toContain('Codex 用量');
     expect(usage).toContain('24.0%');
-    expect(usage).toContain('累计消耗');
-    expect(usage).toContain('448,505');
-    expect(usage).toContain('primary: 14%');
-    expect(usage).toContain('secondary: 25%');
+    expect(usage).toContain('62,088 / 258,400');
+    expect(usage).toContain('最近请求');
+    expect(usage).toContain('本轮 62,088');
+    expect(usage).toContain('累计 448,505');
+    expect(usage).toContain('5h 窗口');
+    expect(usage).toContain('06-21 16:17 UTC');
+    expect(usage).toContain('7d 窗口');
+    expect(usage).toContain('06-27 20:09 UTC');
+    expect(usage).toContain('"cmd":"status"');
+    expect(usage).not.toContain('2026-06-22T');
+    expect(usage).not.toContain('last_token_usage');
   });
 
   it('explains that Codex usage needs an active thread', async () => {

@@ -128,6 +128,91 @@ export function statusCard(info: StatusInfo): object {
   ]);
 }
 
+export interface UsageCardInfo {
+  sessionId: string;
+  sampledAt?: string;
+  context?: {
+    percent: string;
+    used: string;
+    window: string;
+  };
+  recent?: {
+    total: string;
+    input?: string;
+    cached?: string;
+    output?: string;
+    reasoning?: string;
+  };
+  cumulative?: {
+    total: string;
+    input?: string;
+    cached?: string;
+    output?: string;
+    reasoning?: string;
+  };
+  rateLimits?: {
+    primary?: string;
+    secondary?: string;
+  };
+}
+
+export function usageCard(info: UsageCardInfo): object {
+  const elements: object[] = [];
+  if (info.context) {
+    elements.push(
+      divMd(
+        [
+          `**当前上下文  ${escapeMd(info.context.percent)}**`,
+          `\`${escapeCode(info.context.used)} / ${escapeCode(info.context.window)}\``,
+        ].join('\n'),
+      ),
+    );
+  } else {
+    elements.push(divMd('**当前上下文**\n暂无窗口快照'));
+  }
+
+  if (info.recent) {
+    elements.push(HR);
+    elements.push(divMd(`**最近请求**\n${usageMetricLine('本轮', info.recent)}`));
+  }
+
+  if (info.cumulative) {
+    elements.push(divMd(`**累计消耗**\n${usageMetricLine('累计', info.cumulative)}`));
+  }
+
+  const limits = [info.rateLimits?.primary, info.rateLimits?.secondary].filter(Boolean);
+  if (limits.length > 0) {
+    elements.push(HR);
+    elements.push(divMd(`**Rate limit**\n${limits.map((limit) => escapeMd(limit!)).join('\n')}`));
+  }
+
+  elements.push(HR);
+  elements.push(
+    divMd(
+      [
+        `session \`${escapeCode(info.sessionId)}\`${info.sampledAt ? ` · ${escapeMd(info.sampledAt)}` : ''}`,
+        '_当前上下文按最近一次 token_count 估算；累计消耗不是上下文长度。_',
+      ].join('\n'),
+    ),
+  );
+  elements.push(
+    actions([
+      { text: '📊 状态', value: { cmd: 'status' }, style: 'primary' },
+      { text: '🔁 恢复会话', value: { cmd: 'resume' } },
+    ]),
+  );
+  return shell('📈 Codex 用量', elements);
+}
+
+function usageMetricLine(label: string, usage: NonNullable<UsageCardInfo['recent']>): string {
+  const parts = [`${label} ${usage.total}`];
+  if (usage.input) parts.push(`输入 ${usage.input}`);
+  if (usage.cached) parts.push(`缓存 ${usage.cached}`);
+  if (usage.output) parts.push(`输出 ${usage.output}`);
+  if (usage.reasoning) parts.push(`思考 ${usage.reasoning}`);
+  return parts.map(escapeMd).join(' · ');
+}
+
 export interface ResumeEntry {
   sessionId: string;
   displayId?: string;

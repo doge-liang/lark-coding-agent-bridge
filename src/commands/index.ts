@@ -23,7 +23,7 @@ import {
 import { GROUP_MSG_SCOPE, hasGroupMsgScope } from '../bot/app-scope';
 import { requestScopeGrantLink } from '../bot/wizard';
 import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/managed';
-import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
+import { helpCard, resumeCard, statusCard, usageCard, workspacesCard, type UsageCardInfo } from '../card/templates';
 import type { AppConfig, AppPreferences, MessageReplyMode, TenantBrand } from '../config/schema';
 import {
   getAgentStopGraceMs,
@@ -846,7 +846,11 @@ async function handleUsage(_args: string, ctx: CommandContext): Promise<void> {
   const usage = await readCodexUsageForThread(catalogEntry.threadId, {
     ...(codexUsageHome(ctx) ? { codexHome: codexUsageHome(ctx) } : {}),
   });
-  await reply(ctx, formatUsageReply(usage));
+  if (!usage.ok) {
+    await reply(ctx, formatUsageErrorReply(usage));
+    return;
+  }
+  await ctx.channel.send(ctx.msg.chatId, { card: usageCard(formatUsageCardInfo(usage)) }, { replyTo: ctx.msg.messageId });
 }
 
 function codexUsageHome(ctx: CommandContext): string | undefined {
@@ -856,68 +860,78 @@ function codexUsageHome(ctx: CommandContext): string | undefined {
   return undefined;
 }
 
-function formatUsageReply(usage: CodexUsageResult): string {
-  if (!usage.ok) {
-    if (usage.reason === 'not-found') {
-      return '没有找到当前 Codex session 的本地 usage 记录。确认这个 profile 使用的是同一个 `CODEX_HOME`，并且当前 session 已经跑过至少一轮。';
-    }
-    if (usage.reason === 'no-token-count') {
-      return '当前 Codex session 文件里还没有 `token_count` 事件。跑完一轮后再试。';
-    }
-    return `读取 Codex usage 失败：${usage.message ?? 'unknown error'}`;
+function formatUsageErrorReply(usage: Extract<CodexUsageResult, { ok: false }>): string {
+  if (usage.reason === 'not-found') {
+    return '没有找到当前 Codex session 的本地 usage 记录。确认这个 profile 使用的是同一个 `CODEX_HOME`，并且当前 session 已经跑过至少一轮。';
   }
-
-  const lines = ['**Codex usage**'];
-  lines.push(`session: \`${shortId(usage.threadId)}\``);
-  if (usage.timestamp) lines.push(`时间: ${usage.timestamp}`);
-
-  const contextLine = formatContextLine(usage);
-  if (contextLine) lines.push(contextLine);
-  else if (usage.contextWindow !== undefined) lines.push(`上下文窗口: ${formatNumber(usage.contextWindow)}`);
-
-  if (usage.last) lines.push(`最近请求: ${formatTokenUsage(usage.last)}`);
-  if (usage.total) lines.push(`累计消耗: ${formatTokenUsage(usage.total)}`);
-
-  const limits = formatRateLimits(usage.rateLimits);
-  if (limits) lines.push(`Rate limit: ${limits}`);
-
-  lines.push('_注：当前上下文使用最近一次 `last_token_usage.total_tokens` 估算；累计消耗不是上下文长度。_');
-  return lines.join('\n');
+  if (usage.reason === 'no-token-count') {
+    return '当前 Codex session 文件里还没有 `token_count` 事件。跑完一轮后再试。';
+  }
+  return `读取 Codex usage 失败：${usage.message ?? 'unknown error'}`;
 }
 
-function formatContextLine(usage: CodexUsageSnapshot): string | undefined {
+function formatUsageCardInfo(usage: CodexUsageSnapshot): UsageCardInfo {
+  return {
+    sessionId: shortId(usage.threadId),
+    ...(formatUsageTimestamp(usage.timestamp) ? { sampledAt: formatUsageTimestamp(usage.timestamp) } : {}),
+    ...(formatUsageContext(usage) ? { context: formatUsageContext(usage)! } : {}),
+    ...(usage.last ? { recent: formatUsageTokens(usage.last) } : {}),
+    ...(usage.total ? { cumulative: formatUsageTokens(usage.total) } : {}),
+    ...(formatUsageRateLimits(usage.rateLimits) ? { rateLimits: formatUsageRateLimits(usage.rateLimits)! } : {}),
+  };
+}
+
+function formatUsageContext(usage: CodexUsageSnapshot): UsageCardInfo['context'] | undefined {
   const current = usage.last?.totalTokens;
   const window = usage.contextWindow;
   if (current === undefined || window === undefined || window <= 0) return undefined;
-  return `当前上下文: ${formatNumber(current)} / ${formatNumber(window)} (${((current / window) * 100).toFixed(1)}%)`;
+  return {
+    percent: `${((current / window) * 100).toFixed(1)}%`,
+    used: formatNumber(current),
+    window: formatNumber(window),
+  };
 }
 
-function formatTokenUsage(usage: TokenUsage): string {
-  const parts: string[] = [];
-  if (usage.totalTokens !== undefined) parts.push(`${formatNumber(usage.totalTokens)} total`);
-  if (usage.inputTokens !== undefined) parts.push(`input ${formatNumber(usage.inputTokens)}`);
-  if (usage.cachedInputTokens !== undefined) parts.push(`cached ${formatNumber(usage.cachedInputTokens)}`);
-  if (usage.outputTokens !== undefined) parts.push(`output ${formatNumber(usage.outputTokens)}`);
-  if (usage.reasoningOutputTokens !== undefined) parts.push(`reasoning ${formatNumber(usage.reasoningOutputTokens)}`);
-  return parts.length > 0 ? parts.join(', ') : '无可用 token 计数';
+function formatUsageTokens(usage: TokenUsage): NonNullable<UsageCardInfo['recent']> {
+  return {
+    total: usage.totalTokens !== undefined ? formatNumber(usage.totalTokens) : 'n/a',
+    ...(usage.inputTokens !== undefined ? { input: formatNumber(usage.inputTokens) } : {}),
+    ...(usage.cachedInputTokens !== undefined ? { cached: formatNumber(usage.cachedInputTokens) } : {}),
+    ...(usage.outputTokens !== undefined ? { output: formatNumber(usage.outputTokens) } : {}),
+    ...(usage.reasoningOutputTokens !== undefined ? { reasoning: formatNumber(usage.reasoningOutputTokens) } : {}),
+  };
 }
 
-function formatRateLimits(rateLimits: CodexUsageSnapshot['rateLimits']): string | undefined {
-  const parts: string[] = [];
+function formatUsageRateLimits(rateLimits: CodexUsageSnapshot['rateLimits']): UsageCardInfo['rateLimits'] | undefined {
   const primary = formatRateLimit('primary', rateLimits?.primary);
   const secondary = formatRateLimit('secondary', rateLimits?.secondary);
-  if (primary) parts.push(primary);
-  if (secondary) parts.push(secondary);
-  return parts.length > 0 ? parts.join(', ') : undefined;
+  if (!primary && !secondary) return undefined;
+  return {
+    ...(primary ? { primary } : {}),
+    ...(secondary ? { secondary } : {}),
+  };
 }
 
 function formatRateLimit(name: string, limit: CodexRateLimit | undefined): string | undefined {
   if (!limit) return undefined;
   const details: string[] = [];
   if (limit.usedPercent !== undefined) details.push(`${formatPercentValue(limit.usedPercent)}%`);
-  if (limit.windowMinutes !== undefined) details.push(`${formatWindow(limit.windowMinutes)}`);
-  if (limit.resetsAt !== undefined) details.push(`reset ${new Date(limit.resetsAt * 1000).toISOString()}`);
-  return details.length > 0 ? `${name}: ${details.join(' / ')}` : undefined;
+  if (limit.windowMinutes !== undefined) details.push(`${formatWindow(limit.windowMinutes)} 窗口`);
+  if (limit.resetsAt !== undefined) details.push(`重置 ${formatResetAt(limit.resetsAt)}`);
+  return details.length > 0 ? `${name} ${details.join(' · ')}` : undefined;
+}
+
+function formatResetAt(seconds: number): string {
+  const date = new Date(seconds * 1000);
+  if (Number.isNaN(date.getTime())) return 'unknown';
+  return `${date.toISOString().slice(5, 16).replace('T', ' ')} UTC`;
+}
+
+function formatUsageTimestamp(timestamp: string | undefined): string | undefined {
+  if (!timestamp) return undefined;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return `${date.toISOString().slice(5, 16).replace('T', ' ')} UTC`;
 }
 
 function formatWindow(minutes: number): string {
