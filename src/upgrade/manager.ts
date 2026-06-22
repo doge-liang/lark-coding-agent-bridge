@@ -139,7 +139,13 @@ export class UpgradeManager {
   async apply(): Promise<UpgradeApplyResult> {
     if (!this.options.profileConfig.upgrade.enabled) return { status: 'disabled', enabled: false };
 
-    return withUpgradeLock(this.paths.lockFile, async () => {
+    type PendingRestart = {
+      status: 'pending_restart';
+      targetCommit: string;
+      releasePath: string;
+      logPath: string;
+    };
+    const switched = await withUpgradeLock<UpgradeApplyResult | PendingRestart>(this.paths.lockFile, async () => {
       const operationId = this.operationId();
       const logPath = this.paths.logFile(operationId);
       const staging = this.paths.stagingDir(operationId);
@@ -202,24 +208,45 @@ export class UpgradeManager {
         };
         await saveUpgradeState(this.paths.stateFile, next);
 
-        const restart = await this.options.restartService();
-        if (!restart.ok) {
-          await this.recordLastOperation('apply', 'failed', 'restart', restart.stderr, logPath);
-          return { status: 'restart_failed', targetCommit, releasePath, logPath, stderr: restart.stderr };
-        }
-        return { status: 'ok', targetCommit, releasePath, logPath };
+        return { status: 'pending_restart', targetCommit, releasePath, logPath };
       } catch (err) {
         const stage = err instanceof UpgradeCommandError ? err.stage : 'apply';
         const message = err instanceof Error ? err.message : String(err);
         return fail(stage, message);
       }
     });
+    if (switched.status !== 'pending_restart') return switched;
+
+    const restart = await this.options.restartService();
+    if (!restart.ok) {
+      await withUpgradeLock(this.paths.lockFile, () =>
+        this.recordLastOperation('apply', 'failed', 'restart', restart.stderr, switched.logPath),
+      );
+      return {
+        status: 'restart_failed',
+        targetCommit: switched.targetCommit,
+        releasePath: switched.releasePath,
+        logPath: switched.logPath,
+        stderr: restart.stderr,
+      };
+    }
+    return {
+      status: 'ok',
+      targetCommit: switched.targetCommit,
+      releasePath: switched.releasePath,
+      logPath: switched.logPath,
+    };
   }
 
   async rollback(): Promise<UpgradeRollbackResult> {
     if (!this.options.profileConfig.upgrade.enabled) return { status: 'disabled', enabled: false };
 
-    return withUpgradeLock(this.paths.lockFile, async () => {
+    type PendingRollbackRestart = {
+      status: 'pending_restart';
+      currentCommit: string;
+      state: UpgradeState;
+    };
+    const switched = await withUpgradeLock<UpgradeRollbackResult | PendingRollbackRestart>(this.paths.lockFile, async () => {
       const state = await loadUpgradeState(this.paths.stateFile);
       if (!state.previous) {
         return { status: 'failed', stage: 'rollback', message: 'no previous release to roll back to' };
@@ -237,10 +264,15 @@ export class UpgradeManager {
       };
       await saveUpgradeState(this.paths.stateFile, next);
 
-      const restart = await this.options.restartService();
-      if (!restart.ok) {
-        await saveUpgradeState(this.paths.stateFile, {
-          ...next,
+      return { status: 'pending_restart', currentCommit: state.previous.commit, state: next };
+    });
+    if (switched.status !== 'pending_restart') return switched;
+
+    const restart = await this.options.restartService();
+    if (!restart.ok) {
+      await withUpgradeLock(this.paths.lockFile, () =>
+        saveUpgradeState(this.paths.stateFile, {
+          ...switched.state,
           lastOperation: {
             kind: 'rollback',
             status: 'failed',
@@ -248,12 +280,12 @@ export class UpgradeManager {
             message: restart.stderr,
             at: this.now().toISOString(),
           },
-        });
-        return { status: 'restart_failed', currentCommit: state.previous.commit, stderr: restart.stderr };
-      }
+        }),
+      );
+      return { status: 'restart_failed', currentCommit: switched.currentCommit, stderr: restart.stderr };
+    }
 
-      return { status: 'ok', currentCommit: state.previous.commit };
-    });
+    return { status: 'ok', currentCommit: switched.currentCommit };
   }
 
   private async fetchAndResolve(remote: string, branch: string, logPath?: string): Promise<string> {

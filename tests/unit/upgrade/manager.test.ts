@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { UpgradeManager, runUpgradeCommand } from '../../../src/upgrade/manager';
 import { resolveUpgradePaths } from '../../../src/upgrade/paths';
-import { loadUpgradeState, saveUpgradeState } from '../../../src/upgrade/state';
+import { loadUpgradeState, saveUpgradeState, withUpgradeLock } from '../../../src/upgrade/state';
 
 const roots: string[] = [];
 
@@ -129,6 +129,36 @@ describe('UpgradeManager', () => {
     expect(state.pendingActivation?.commit).toBe('new');
     expect(state.pendingActivation?.notify).toEqual(notify);
     expect(h.restart).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the upgrade state lock before requesting restart', async () => {
+    const h = await harness({ enabled: true });
+    await saveUpgradeState(h.paths.stateFile, {
+      current: { commit: 'old', path: h.currentPath },
+    });
+    h.run
+      .mockResolvedValueOnce({ ok: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ ok: true, stdout: 'new\n', stderr: '' })
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: 'https://github.com/doge-liang/lark-coding-agent-bridge.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({ ok: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ ok: true, stdout: 'new\n', stderr: '' })
+      .mockResolvedValue({ ok: true, stdout: '', stderr: '' });
+    let restartObservedUnlockedState = false;
+    h.restart.mockImplementation(async () => {
+      await withUpgradeLock(h.paths.lockFile, async () => {
+        restartObservedUnlockedState = true;
+      });
+      return { ok: true, stderr: '' };
+    });
+
+    const result = await h.manager.apply();
+
+    expect(result.status).toBe('ok');
+    expect(restartObservedUnlockedState).toBe(true);
   });
 
   it('runs pnpm test during verification when required', async () => {
