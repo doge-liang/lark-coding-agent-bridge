@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   resolveProfileRuntime: vi.fn(),
   preFlightChecks: vi.fn(),
   withProfileAndAppLocks: vi.fn(),
+  checkRuntimeLock: vi.fn(),
+  loadUpgradeState: vi.fn(),
 }));
 
 vi.mock('../../../src/runtime/profile-runtime', () => ({
@@ -20,6 +22,15 @@ vi.mock('../../../src/runtime/locks', async (importOriginal) => {
   return {
     ...actual,
     withProfileAndAppLocks: mocks.withProfileAndAppLocks,
+    checkRuntimeLock: mocks.checkRuntimeLock,
+  };
+});
+
+vi.mock('../../../src/upgrade/state', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/upgrade/state')>();
+  return {
+    ...actual,
+    loadUpgradeState: mocks.loadUpgradeState,
   };
 });
 
@@ -48,6 +59,8 @@ const { runStart } = await import('../../../src/cli/commands/start');
 describe('run runtime lock conflict handling', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.checkRuntimeLock.mockResolvedValue({ locked: false });
+    mocks.loadUpgradeState.mockResolvedValue({});
     mocks.resolveProfileRuntime.mockResolvedValue({
       profile: 'codex',
       configPath: '/tmp/lark-channel-home/config.json',
@@ -127,6 +140,50 @@ describe('run runtime lock conflict handling', () => {
 
     expect(mocks.withProfileAndAppLocks).toHaveBeenCalledTimes(2);
     expect(stopped).toEqual([holder]);
+    expect(exit).not.toHaveBeenCalled();
+    exit.mockRestore();
+  });
+
+  it('waits for the previous process lock during pending upgrade activation', async () => {
+    const holder: RuntimeLockMeta = {
+      kind: 'profile',
+      target: '/tmp/lark-channel-home/registry/locks/profile/codex.lock',
+      profile: 'codex',
+      agentKind: 'codex',
+      pid: 883894,
+      startedAt: '2026-06-22T05:29:58.592Z',
+    };
+    mocks.loadUpgradeState.mockResolvedValue({
+      current: { commit: 'new', path: '/releases/new' },
+      pendingActivation: {
+        commit: 'new',
+        operationId: 'op-1',
+        startedAt: '2026-06-22T05:29:58.000Z',
+        deadlineAt: new Date(Date.now() + 30_000).toISOString(),
+      },
+    });
+    mocks.checkRuntimeLock
+      .mockResolvedValueOnce({ locked: true, meta: holder })
+      .mockResolvedValueOnce({ locked: false });
+    mocks.withProfileAndAppLocks
+      .mockRejectedValueOnce(new RuntimeLockConflictError('profile', holder.target, holder, new Error('locked')))
+      .mockResolvedValueOnce(undefined);
+    const exit = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
+      throw new Error(`exit:${code}`);
+    });
+
+    await expect(
+      runStart({
+        profile: 'codex',
+        skipCheckLarkCli: true,
+        confirmStopRuntimeLockProcess: async () => {
+          throw new Error('upgrade activation lock wait should not prompt');
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(mocks.withProfileAndAppLocks).toHaveBeenCalledTimes(2);
+    expect(mocks.checkRuntimeLock).toHaveBeenCalledWith(holder.target);
     expect(exit).not.toHaveBeenCalled();
     exit.mockRestore();
   });

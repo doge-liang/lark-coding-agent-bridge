@@ -1,6 +1,7 @@
 import dns from 'node:dns';
 import os from 'node:os';
 import { createInterface } from 'node:readline';
+import { setTimeout as delay } from 'node:timers/promises';
 import pkg from '../../../package.json';
 import { ClaudeAdapter } from '../../agent/claude/adapter';
 import { CodexAdapter } from '../../agent/codex/adapter';
@@ -35,6 +36,7 @@ import {
 } from '../../runtime/registry';
 import {
   acquireAppRuntimeLock,
+  checkRuntimeLock,
   RuntimeLockConflictError,
   withProfileAndAppLocks,
   type AcquiredRuntimeLock,
@@ -70,6 +72,7 @@ process.on('uncaughtException', (err) => {
 });
 
 const MEDIA_GC_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const UPGRADE_ACTIVATION_LOCK_POLL_MS = 100;
 
 export interface StartOptions {
   config?: string;
@@ -369,7 +372,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
       );
       return;
     } catch (err) {
-      const action = await handleRuntimeLockConflict(err, opts);
+      const action = await handleRuntimeLockConflict(err, opts, appPaths);
       if (action === 'retry') continue;
       if (action === 'cancel') return;
       throw err;
@@ -525,6 +528,7 @@ type RuntimeLockConflictAction = 'retry' | 'cancel' | 'unhandled';
 async function handleRuntimeLockConflict(
   err: unknown,
   opts: StartOptions,
+  appPaths: AppPaths,
 ): Promise<RuntimeLockConflictAction> {
   if (!(err instanceof RuntimeLockConflictError)) return 'unhandled';
   console.error(`✗ 当前 ${err.kind === 'profile' ? 'profile' : 'app'} 已有 bridge 进程占用。`);
@@ -536,6 +540,10 @@ async function handleRuntimeLockConflict(
   } else {
     console.error(`  lock: ${err.target}`);
     return 'unhandled';
+  }
+
+  if (await waitForPendingActivationLockRelease(err, appPaths)) {
+    return 'retry';
   }
 
   const confirmed = opts.confirmStopRuntimeLockProcess
@@ -555,6 +563,48 @@ async function handleRuntimeLockConflict(
     console.log(`✓ 已停止 pid ${err.meta.pid}`);
   }
   return 'retry';
+}
+
+async function waitForPendingActivationLockRelease(
+  err: RuntimeLockConflictError,
+  appPaths: Pick<AppPaths, 'profileDir'>,
+): Promise<boolean> {
+  if (!err.meta) return false;
+
+  let deadlineMs: number;
+  try {
+    const state = await loadUpgradeState(resolveUpgradePaths(appPaths).stateFile);
+    const pending = state.pendingActivation;
+    if (!pending) return false;
+    deadlineMs = Date.parse(pending.deadlineAt);
+  } catch (loadErr) {
+    log.warn('upgrade', 'activation-lock-wait-state-load-failed', { err: String(loadErr) });
+    return false;
+  }
+  if (!Number.isFinite(deadlineMs)) return false;
+
+  const holderPid = err.meta.pid;
+  console.warn(`⏳ 升级激活中，等待旧进程 pid ${holderPid} 释放 runtime lock...`);
+  for (;;) {
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) return false;
+
+    const lock = await checkRuntimeLock(err.target);
+    if (!lock.locked) {
+      console.warn('✓ 旧进程已释放 runtime lock，继续启动。');
+      return true;
+    }
+    if (lock.meta && lock.meta.pid !== holderPid) {
+      log.warn('upgrade', 'activation-lock-holder-changed', {
+        expectedPid: holderPid,
+        actualPid: lock.meta.pid,
+        target: err.target,
+      });
+      return false;
+    }
+
+    await delay(Math.min(UPGRADE_ACTIVATION_LOCK_POLL_MS, remainingMs));
+  }
 }
 
 async function confirmStopRuntimeLockProcess(err: RuntimeLockConflictError): Promise<boolean> {
