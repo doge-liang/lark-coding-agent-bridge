@@ -236,6 +236,7 @@ describe('Bridge command contracts', () => {
     expect(status).not.toContain('workspace-write/workspace-write');
     expect(status).toContain('owner');
     expect(status).toContain(jsonStringFragment(await realpath(h.tmp.workspace)));
+    expect(status).not.toContain('"cmd":"usage"');
   });
 
   it('shows workspace paths in group-visible /status replies', async () => {

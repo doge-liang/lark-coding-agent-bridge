@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
@@ -254,7 +255,41 @@ describe('agent-aware resume commands', () => {
     status = JSON.stringify(lastContent(h.channel));
     expect(status).toContain('**session**');
     expect(status).toContain('thread-c');
+    expect(status).toContain('"cmd":"usage"');
     expect(status).not.toContain('未建立');
+  });
+
+  it('renders Codex usage and context window for the current thread', async () => {
+    const h = await createHarness('codex');
+    const codexHome = join(h.tmp.root, 'codex-home');
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    cleanups.push(async () => {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+    });
+    h.catalog.upsertActive({ ...h.identity, threadId: 'thread-current', now: 1000 });
+    await writeCodexUsageFile(codexHome, 'thread-current');
+
+    await expect(h.run('/usage')).resolves.toBe(true);
+
+    const usage = lastMarkdown(h.channel);
+    expect(usage).toContain('Codex usage');
+    expect(usage).toContain('当前上下文');
+    expect(usage).toContain('62,088 / 258,400');
+    expect(usage).toContain('24.0%');
+    expect(usage).toContain('累计消耗');
+    expect(usage).toContain('448,505');
+    expect(usage).toContain('primary: 14%');
+    expect(usage).toContain('secondary: 25%');
+  });
+
+  it('explains that Codex usage needs an active thread', async () => {
+    const h = await createHarness('codex');
+
+    await expect(h.run('/usage')).resolves.toBe(true);
+
+    expect(lastMarkdown(h.channel)).toContain('还没有当前 Codex session');
   });
 
   it('does not list local history from home when no workspace is bound', async () => {
@@ -359,6 +394,43 @@ async function createHarness(
     run,
     dispatchResumeArg,
   };
+}
+
+async function writeCodexUsageFile(codexHome: string, threadId: string): Promise<void> {
+  const sessionDir = join(codexHome, 'sessions', '2026', '06', '21');
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(
+    join(sessionDir, `rollout-2026-06-21T11-30-12-${threadId}.jsonl`),
+    `${JSON.stringify({
+      timestamp: '2026-06-21T11:31:33.247Z',
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: {
+            input_tokens: 444017,
+            cached_input_tokens: 301184,
+            output_tokens: 4488,
+            reasoning_output_tokens: 1720,
+            total_tokens: 448505,
+          },
+          last_token_usage: {
+            input_tokens: 61238,
+            cached_input_tokens: 52096,
+            output_tokens: 850,
+            reasoning_output_tokens: 587,
+            total_tokens: 62088,
+          },
+          model_context_window: 258400,
+        },
+        rate_limits: {
+          primary: { used_percent: 14, window_minutes: 300, resets_at: 1782058661 },
+          secondary: { used_percent: 25, window_minutes: 10080, resets_at: 1782590960 },
+        },
+      },
+    })}\n`,
+    'utf8',
+  );
 }
 
 function claudeSession(

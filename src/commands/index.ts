@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
 import { claudeCapability, codexCapability } from '../agent/capability';
 import type { AgentAdapter } from '../agent/types';
@@ -66,6 +66,13 @@ import {
   type CodexThreadHistoryEntry,
   type ListCodexThreadHistoryOptions,
 } from '../session/codex-history';
+import {
+  readCodexUsageForThread,
+  type CodexRateLimit,
+  type CodexUsageResult,
+  type CodexUsageSnapshot,
+  type TokenUsage,
+} from '../session/codex-usage';
 import type { SessionCatalog, SessionCatalogIdentity } from '../session/catalog';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
 import type { SessionStore } from '../session/store';
@@ -166,6 +173,7 @@ const handlers: Record<string, Handler> = {
   '/ws': handleWs,
   '/resume': handleResume,
   '/status': handleStatus,
+  '/usage': handleUsage,
   '/help': handleHelp,
   '/account': handleAccount,
   '/config': handleConfig,
@@ -816,8 +824,118 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     ownerState: formatOwnerState(ctx),
     scope: ctx.scope,
     chatMode: ctx.chatMode,
+    showUsage: isCodex,
   });
   await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+}
+
+async function handleUsage(_args: string, ctx: CommandContext): Promise<void> {
+  if (ctx.controls.profileConfig.agentKind !== 'codex') {
+    await reply(ctx, '`/usage` 当前只支持 Codex profile；Claude profile 暂时没有可用的上下文窗口快照。');
+    return;
+  }
+  const catalogEntry =
+    ctx.sessionCatalog && ctx.sessionCatalogIdentity
+      ? ctx.sessionCatalog.activeFor(ctx.sessionCatalogIdentity)
+      : undefined;
+  if (!catalogEntry?.threadId) {
+    await reply(ctx, '还没有当前 Codex session。先发一条普通消息建立 session 后，再用 `/usage` 查看用量和上下文长度。');
+    return;
+  }
+
+  const usage = await readCodexUsageForThread(catalogEntry.threadId, {
+    ...(codexUsageHome(ctx) ? { codexHome: codexUsageHome(ctx) } : {}),
+  });
+  await reply(ctx, formatUsageReply(usage));
+}
+
+function codexUsageHome(ctx: CommandContext): string | undefined {
+  const codex = ctx.controls.profileConfig.codex;
+  if (codex?.codexHome) return codex.codexHome;
+  if (codex?.inheritCodexHome === false) return join(commandProfilePaths(ctx).profileDir, 'codex-home');
+  return undefined;
+}
+
+function formatUsageReply(usage: CodexUsageResult): string {
+  if (!usage.ok) {
+    if (usage.reason === 'not-found') {
+      return '没有找到当前 Codex session 的本地 usage 记录。确认这个 profile 使用的是同一个 `CODEX_HOME`，并且当前 session 已经跑过至少一轮。';
+    }
+    if (usage.reason === 'no-token-count') {
+      return '当前 Codex session 文件里还没有 `token_count` 事件。跑完一轮后再试。';
+    }
+    return `读取 Codex usage 失败：${usage.message ?? 'unknown error'}`;
+  }
+
+  const lines = ['**Codex usage**'];
+  lines.push(`session: \`${shortId(usage.threadId)}\``);
+  if (usage.timestamp) lines.push(`时间: ${usage.timestamp}`);
+
+  const contextLine = formatContextLine(usage);
+  if (contextLine) lines.push(contextLine);
+  else if (usage.contextWindow !== undefined) lines.push(`上下文窗口: ${formatNumber(usage.contextWindow)}`);
+
+  if (usage.last) lines.push(`最近请求: ${formatTokenUsage(usage.last)}`);
+  if (usage.total) lines.push(`累计消耗: ${formatTokenUsage(usage.total)}`);
+
+  const limits = formatRateLimits(usage.rateLimits);
+  if (limits) lines.push(`Rate limit: ${limits}`);
+
+  lines.push('_注：当前上下文使用最近一次 `last_token_usage.total_tokens` 估算；累计消耗不是上下文长度。_');
+  return lines.join('\n');
+}
+
+function formatContextLine(usage: CodexUsageSnapshot): string | undefined {
+  const current = usage.last?.totalTokens;
+  const window = usage.contextWindow;
+  if (current === undefined || window === undefined || window <= 0) return undefined;
+  return `当前上下文: ${formatNumber(current)} / ${formatNumber(window)} (${((current / window) * 100).toFixed(1)}%)`;
+}
+
+function formatTokenUsage(usage: TokenUsage): string {
+  const parts: string[] = [];
+  if (usage.totalTokens !== undefined) parts.push(`${formatNumber(usage.totalTokens)} total`);
+  if (usage.inputTokens !== undefined) parts.push(`input ${formatNumber(usage.inputTokens)}`);
+  if (usage.cachedInputTokens !== undefined) parts.push(`cached ${formatNumber(usage.cachedInputTokens)}`);
+  if (usage.outputTokens !== undefined) parts.push(`output ${formatNumber(usage.outputTokens)}`);
+  if (usage.reasoningOutputTokens !== undefined) parts.push(`reasoning ${formatNumber(usage.reasoningOutputTokens)}`);
+  return parts.length > 0 ? parts.join(', ') : '无可用 token 计数';
+}
+
+function formatRateLimits(rateLimits: CodexUsageSnapshot['rateLimits']): string | undefined {
+  const parts: string[] = [];
+  const primary = formatRateLimit('primary', rateLimits?.primary);
+  const secondary = formatRateLimit('secondary', rateLimits?.secondary);
+  if (primary) parts.push(primary);
+  if (secondary) parts.push(secondary);
+  return parts.length > 0 ? parts.join(', ') : undefined;
+}
+
+function formatRateLimit(name: string, limit: CodexRateLimit | undefined): string | undefined {
+  if (!limit) return undefined;
+  const details: string[] = [];
+  if (limit.usedPercent !== undefined) details.push(`${formatPercentValue(limit.usedPercent)}%`);
+  if (limit.windowMinutes !== undefined) details.push(`${formatWindow(limit.windowMinutes)}`);
+  if (limit.resetsAt !== undefined) details.push(`reset ${new Date(limit.resetsAt * 1000).toISOString()}`);
+  return details.length > 0 ? `${name}: ${details.join(' / ')}` : undefined;
+}
+
+function formatWindow(minutes: number): string {
+  if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)}d`;
+  if (minutes % 60 === 0) return `${minutes / 60}h`;
+  return `${minutes}m`;
+}
+
+function formatPercentValue(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat('en-US').format(value);
+}
+
+function shortId(id: string): string {
+  return id.length > 12 ? `${id.slice(0, 8)}…` : id;
 }
 
 async function handleUpgrade(args: string, ctx: CommandContext): Promise<void> {

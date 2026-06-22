@@ -81,6 +81,7 @@ export interface StatusInfo {
   scope: string;
   /** Chat mode — used to label scope. */
   chatMode: 'p2p' | 'group' | 'topic';
+  showUsage?: boolean;
 }
 
 export function statusCard(info: StatusInfo): object {
@@ -119,6 +120,7 @@ export function statusCard(info: StatusInfo): object {
     HR,
     actions([
       { text: '🆕 新会话', value: { cmd: 'new' }, style: 'primary' },
+      ...(info.showUsage ? [{ text: '📈 用量', value: { cmd: 'usage' } }] : []),
       { text: '🔁 恢复会话', value: { cmd: 'resume' } },
       { text: '📂 工作目录', value: { cmd: 'ws.list' } },
       { text: '💡 帮助', value: { cmd: 'help' } },
@@ -186,6 +188,7 @@ export function helpCard(agentName = 'Agent'): object {
         '- `/account` — 查看当前应用；`/account change` 换 appId/secret 并重连',
         '- `/config` — 调整偏好、访问控制和 lark-cli 身份策略',
         '- `/status` — 当前状态',
+        '- `/usage` — 查看当前 Codex session 的 token 用量和上下文窗口',
         '- `/stop` — 结束当前正在跑的任务（也可点卡片底部 ⏹ 终止 按钮）',
         '- `/stop comment:<scopeHash>` — 管理员停止云文档评论任务',
         '- `/timeout [N|off|default]` — 当前 session 的探活分钟数,`/config` 改全局默认',
@@ -203,6 +206,7 @@ export function helpCard(agentName = 'Agent'): object {
     HR,
     actions([
       { text: '📊 状态', value: { cmd: 'status' }, style: 'primary' },
+      { text: '📈 用量', value: { cmd: 'usage' } },
       { text: '🔁 恢复会话', value: { cmd: 'resume' } },
       { text: '📂 工作目录', value: { cmd: 'ws.list' } },
       { text: '🆕 新会话', value: { cmd: 'new' } },
