@@ -15,6 +15,8 @@ describe('upgrade launcher script', () => {
     expect(script).toContain('const FALLBACK_NODE = "/usr/bin/node";');
     expect(script).toContain('const FALLBACK_BRIDGE_ENTRY = "/repo/bin/lark-channel-bridge.mjs";');
     expect(script).toContain('pendingActivation');
+    expect(script).toContain('pendingNotification');
+    expect(script).toContain("id: pending.operationId + ':activation_failed'");
     expect(script).toContain('rollbackState');
   });
 

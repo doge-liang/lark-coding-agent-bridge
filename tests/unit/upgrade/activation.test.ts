@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveAppPaths } from '../../../src/config/app-paths';
-import { markUpgradeActivationHealthy } from '../../../src/upgrade/activation';
+import {
+  clearPendingUpgradeNotification,
+  markUpgradeActivationHealthy,
+  readPendingUpgradeNotification,
+} from '../../../src/upgrade/activation';
 import { resolveUpgradePaths } from '../../../src/upgrade/paths';
 import { loadUpgradeState, saveUpgradeState, withUpgradeLock } from '../../../src/upgrade/state';
 
@@ -124,5 +128,33 @@ describe('upgrade activation health', () => {
 
     const state = await loadUpgradeState(upgradePaths.stateFile);
     expect(state.pendingActivation?.commit).toBe('other');
+  });
+
+  it('reads and clears pending upgrade notifications by id', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'upgrade-activation-'));
+    roots.push(root);
+    const appPaths = resolveAppPaths({ rootDir: root, profile: 'claude' });
+    const upgradePaths = resolveUpgradePaths(appPaths);
+    await saveUpgradeState(upgradePaths.stateFile, {
+      current: { commit: 'old', path: '/releases/old' },
+      pendingNotification: {
+        id: 'op-1:activation_failed',
+        kind: 'activation_failed',
+        status: 'rolled_back',
+        commit: 'new',
+        message: 'health-timeout',
+        notify: { chatId: 'oc_upgrade', messageId: 'om_upgrade' },
+        createdAt: '2026-06-20T00:01:00.000Z',
+      },
+    });
+
+    await expect(readPendingUpgradeNotification(appPaths)).resolves.toMatchObject({
+      id: 'op-1:activation_failed',
+      message: 'health-timeout',
+    });
+    await clearPendingUpgradeNotification(appPaths, 'other');
+    await expect(readPendingUpgradeNotification(appPaths)).resolves.toBeDefined();
+    await clearPendingUpgradeNotification(appPaths, 'op-1:activation_failed');
+    await expect(readPendingUpgradeNotification(appPaths)).resolves.toBeUndefined();
   });
 });

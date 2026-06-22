@@ -46,7 +46,14 @@ import { resolveProfileRuntime } from '../../runtime/profile-runtime';
 import { refreshOwnerControls } from '../../policy/owner';
 import { SessionStore } from '../../session/store';
 import { SessionCatalog } from '../../session/catalog';
-import { markUpgradeActivationHealthy, type UpgradeActivationHealthyResult } from '../../upgrade/activation';
+import {
+  clearPendingUpgradeNotification,
+  markUpgradeActivationHealthy,
+  readPendingUpgradeNotification,
+  type UpgradeActivationHealthyResult,
+  type UpgradeNotificationResult,
+} from '../../upgrade/activation';
+import { writeUpgradeLauncherScript } from '../../upgrade/launcher-script';
 import { resolveUpgradePaths } from '../../upgrade/paths';
 import { loadUpgradeState } from '../../upgrade/state';
 import { WorkspaceStore } from '../../workspace/store';
@@ -328,6 +335,10 @@ export async function runStart(opts: StartOptions): Promise<void> {
         };
         controls = makeControls(appPaths, cfg, profileConfig);
 
+        await refreshUpgradeLauncher(appPaths).catch((err) =>
+          log.warn('upgrade', 'launcher-refresh-failed', { err: String(err) }),
+        );
+
         bridge = await startChannel({
           cfg,
           agent,
@@ -352,6 +363,11 @@ export async function runStart(opts: StartOptions): Promise<void> {
           await sendUpgradeActivationNotification(bridge.channel, activation);
         } catch (err) {
           log.warn('upgrade', 'activation-mark-failed', { err: String(err) });
+        }
+        try {
+          await sendPendingUpgradeNotification(appPaths, bridge.channel);
+        } catch (err) {
+          log.warn('upgrade', 'pending-notification-failed', { err: String(err) });
         }
 
         process.on('SIGINT', () => void stop('SIGINT'));
@@ -402,6 +418,17 @@ async function currentUpgradeCommit(appPaths: Pick<AppPaths, 'profileDir'>): Pro
   return state.current?.commit;
 }
 
+async function refreshUpgradeLauncher(appPaths: AppPaths): Promise<void> {
+  const bridgeEntryPath = process.argv[1];
+  if (!bridgeEntryPath) return;
+  await writeUpgradeLauncherScript(resolveUpgradePaths(appPaths).launcherFile, {
+    profile: appPaths.profile,
+    channelHome: appPaths.rootDir,
+    fallbackNodePath: process.execPath,
+    fallbackBridgeEntryPath: bridgeEntryPath,
+  });
+}
+
 async function sendUpgradeActivationNotification(
   channel: BridgeChannel['channel'],
   activation: UpgradeActivationHealthyResult | undefined,
@@ -415,6 +442,35 @@ async function sendUpgradeActivationNotification(
     );
   } catch (err) {
     log.warn('upgrade', 'activation-notify-failed', { err: String(err) });
+  }
+}
+
+async function sendPendingUpgradeNotification(
+  appPaths: Pick<AppPaths, 'profileDir'>,
+  channel: BridgeChannel['channel'],
+): Promise<void> {
+  const notification = await readPendingUpgradeNotification(appPaths);
+  if (!notification) return;
+  const sent = await sendUpgradeNotification(channel, notification);
+  if (sent) await clearPendingUpgradeNotification(appPaths, notification.id);
+}
+
+async function sendUpgradeNotification(
+  channel: BridgeChannel['channel'],
+  notification: UpgradeNotificationResult,
+): Promise<boolean> {
+  try {
+    const title = notification.status === 'rolled_back' ? '升级失败，已回滚。' : '升级失败。';
+    const commit = notification.commit ? `\n目标版本: \`${notification.commit.slice(0, 12)}\`` : '';
+    await channel.send(
+      notification.notify.chatId,
+      { markdown: `❌ ${title}${commit}\n原因: ${notification.message}` },
+      notification.notify.messageId ? { replyTo: notification.notify.messageId } : undefined,
+    );
+    return true;
+  } catch (err) {
+    log.warn('upgrade', 'notification-send-failed', { err: String(err) });
+    return false;
   }
 }
 

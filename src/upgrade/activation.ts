@@ -7,12 +7,15 @@ import {
   withUpgradeLock,
   type UpgradeActivationNotify,
   type UpgradeLockOptions,
+  type UpgradePendingNotification,
 } from './state';
 
 export interface UpgradeActivationHealthyResult {
   commit: string;
   notify?: UpgradeActivationNotify;
 }
+
+export type UpgradeNotificationResult = UpgradePendingNotification;
 
 export interface UpgradeActivationHealthyOptions {
   lock?: UpgradeLockOptions;
@@ -40,4 +43,27 @@ export async function markUpgradeActivationHealthy(
     await saveUpgradeState(upgradePaths.stateFile, clearPendingActivation(state, now));
     return result;
   }, options.lock ?? DEFAULT_ACTIVATION_LOCK_OPTIONS);
+}
+
+export async function readPendingUpgradeNotification(
+  appPaths: Pick<AppPaths, 'profileDir'>,
+): Promise<UpgradeNotificationResult | undefined> {
+  const upgradePaths = resolveUpgradePaths(appPaths);
+  return withUpgradeLock(upgradePaths.lockFile, async () => {
+    const state = await loadUpgradeState(upgradePaths.stateFile);
+    return state.pendingNotification;
+  });
+}
+
+export async function clearPendingUpgradeNotification(
+  appPaths: Pick<AppPaths, 'profileDir'>,
+  id: string,
+): Promise<void> {
+  const upgradePaths = resolveUpgradePaths(appPaths);
+  await withUpgradeLock(upgradePaths.lockFile, async () => {
+    const state = await loadUpgradeState(upgradePaths.stateFile);
+    if (state.pendingNotification?.id !== id) return;
+    const { pendingNotification: _pendingNotification, ...next } = state;
+    await saveUpgradeState(upgradePaths.stateFile, next);
+  });
 }

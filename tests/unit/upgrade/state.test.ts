@@ -108,6 +108,7 @@ describe('upgrade state store', () => {
           operationId: 'op-1',
           startedAt: '2026-06-20T00:00:00.000Z',
           deadlineAt: '2026-06-20T00:01:00.000Z',
+          notify: { chatId: 'oc_upgrade', messageId: 'om_upgrade' },
         },
       },
       'health-timeout',
@@ -121,6 +122,15 @@ describe('upgrade state store', () => {
       status: 'rolled_back',
       stage: 'activation',
       message: 'health-timeout',
+    });
+    expect(rolledBack.pendingNotification).toEqual({
+      id: 'op-1:activation_failed',
+      kind: 'activation_failed',
+      status: 'rolled_back',
+      commit: 'new',
+      message: 'health-timeout',
+      notify: { chatId: 'oc_upgrade', messageId: 'om_upgrade' },
+      createdAt: expect.any(String),
     });
   });
 

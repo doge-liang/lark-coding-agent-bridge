@@ -32,10 +32,21 @@ export interface UpgradeLastOperation {
   at: string;
 }
 
+export interface UpgradePendingNotification {
+  id: string;
+  kind: 'activation_failed';
+  status: 'failed' | 'rolled_back';
+  commit?: string;
+  message: string;
+  notify: UpgradeActivationNotify;
+  createdAt: string;
+}
+
 export interface UpgradeState {
   current?: UpgradeReleaseRef;
   previous?: UpgradeReleaseRef;
   pendingActivation?: PendingActivation;
+  pendingNotification?: UpgradePendingNotification;
   lastOperation?: UpgradeLastOperation;
 }
 
@@ -136,10 +147,12 @@ export function markActivationRolledBack(
   message: string,
   now = new Date(),
 ): UpgradeState {
+  const pendingNotification = activationFailureNotification(state, message, now);
   if (!state.previous) {
     const { pendingActivation: _pendingActivation, ...rest } = state;
     return {
       ...rest,
+      ...(pendingNotification ? { pendingNotification } : {}),
       lastOperation: {
         kind: 'apply',
         status: 'failed',
@@ -151,6 +164,7 @@ export function markActivationRolledBack(
   }
   return {
     current: state.previous,
+    ...(pendingNotification ? { pendingNotification } : {}),
     lastOperation: {
       kind: 'apply',
       status: 'rolled_back',
@@ -158,6 +172,24 @@ export function markActivationRolledBack(
       message,
       at: now.toISOString(),
     },
+  };
+}
+
+function activationFailureNotification(
+  state: UpgradeState,
+  message: string,
+  now: Date,
+): UpgradePendingNotification | undefined {
+  const pending = state.pendingActivation;
+  if (!pending?.notify) return undefined;
+  return {
+    id: `${pending.operationId}:activation_failed`,
+    kind: 'activation_failed',
+    status: state.previous ? 'rolled_back' : 'failed',
+    commit: pending.commit,
+    message,
+    notify: pending.notify,
+    createdAt: now.toISOString(),
   };
 }
 
@@ -173,6 +205,9 @@ function serializeUpgradeState(state: UpgradeState): UpgradeState {
     ...(isReleaseRef(state.previous) ? { previous: serializeReleaseRef(state.previous) } : {}),
     ...(isPendingActivation(state.pendingActivation)
       ? { pendingActivation: serializePendingActivation(state.pendingActivation) }
+      : {}),
+    ...(isPendingNotification(state.pendingNotification)
+      ? { pendingNotification: serializePendingNotification(state.pendingNotification) }
       : {}),
     ...(isLastOperation(state.lastOperation) ? { lastOperation: serializeLastOperation(state.lastOperation) } : {}),
   };
@@ -200,6 +235,18 @@ function serializeActivationNotify(value: UpgradeActivationNotify): UpgradeActiv
   return {
     chatId: value.chatId,
     ...(typeof value.messageId === 'string' ? { messageId: value.messageId } : {}),
+  };
+}
+
+function serializePendingNotification(value: UpgradePendingNotification): UpgradePendingNotification {
+  return {
+    id: value.id,
+    kind: value.kind,
+    status: value.status,
+    ...(typeof value.commit === 'string' ? { commit: value.commit } : {}),
+    message: value.message,
+    notify: serializeActivationNotify(value.notify),
+    createdAt: value.createdAt,
   };
 }
 
@@ -235,6 +282,20 @@ function isActivationNotify(value: unknown): value is UpgradeActivationNotify {
   if (!value || typeof value !== 'object') return false;
   const raw = value as Partial<UpgradeActivationNotify>;
   return typeof raw.chatId === 'string' && (raw.messageId === undefined || typeof raw.messageId === 'string');
+}
+
+function isPendingNotification(value: unknown): value is UpgradePendingNotification {
+  if (!value || typeof value !== 'object') return false;
+  const raw = value as Partial<UpgradePendingNotification>;
+  return (
+    typeof raw.id === 'string' &&
+    raw.kind === 'activation_failed' &&
+    (raw.status === 'failed' || raw.status === 'rolled_back') &&
+    (raw.commit === undefined || typeof raw.commit === 'string') &&
+    typeof raw.message === 'string' &&
+    isActivationNotify(raw.notify) &&
+    typeof raw.createdAt === 'string'
+  );
 }
 
 function isLastOperation(value: unknown): value is UpgradeLastOperation {

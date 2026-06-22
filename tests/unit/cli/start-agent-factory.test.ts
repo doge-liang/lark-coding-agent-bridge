@@ -115,6 +115,24 @@ describe('start runtime agent factory', () => {
     expect(notifyIndex).toBeGreaterThan(markIndex);
   });
 
+  it('refreshes the upgrade launcher before starting the channel', async () => {
+    const source = await readFile(join(process.cwd(), 'src/cli/commands/start.ts'), 'utf8');
+    const refreshIndex = source.indexOf('await refreshUpgradeLauncher(appPaths)');
+    const startIndex = source.indexOf('bridge = await startChannel', refreshIndex);
+
+    expect(refreshIndex).toBeGreaterThanOrEqual(0);
+    expect(startIndex).toBeGreaterThan(refreshIndex);
+  });
+
+  it('sends pending upgrade failure notifications after activation handling', async () => {
+    const source = await readFile(join(process.cwd(), 'src/cli/commands/start.ts'), 'utf8');
+    const activationIndex = source.indexOf('await sendUpgradeActivationNotification');
+    const pendingIndex = source.indexOf('await sendPendingUpgradeNotification', activationIndex);
+
+    expect(activationIndex).toBeGreaterThanOrEqual(0);
+    expect(pendingIndex).toBeGreaterThan(activationIndex);
+  });
+
   it('rejects reconnect when a profile changes agent kind in place', () => {
     expect(() => assertReconnectAgentKindUnchanged('claude', 'codex')).toThrow(/agent kind/i);
     expect(() => assertReconnectAgentKindUnchanged('codex', 'codex')).not.toThrow();
