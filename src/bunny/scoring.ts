@@ -9,6 +9,8 @@ export function scoreCandidate(
   const text = `${candidate.title} ${candidate.summary}`.toLowerCase();
   let score = 40;
   const reasons: string[] = [];
+  const normalizedRecentUrls = new Set([...recentUrls].map((url) => normalizeUrl(url)));
+  const candidateUrl = normalizeUrl(candidate.url);
 
   if (text.includes('workflow') || text.includes('automation')) {
     score += 30;
@@ -22,7 +24,7 @@ export function scoreCandidate(
     score += 10;
     reasons.push('tutorial');
   }
-  if (recentUrls.has(candidate.url)) {
+  if (normalizedRecentUrls.has(candidateUrl)) {
     score -= 60;
     reasons.push('recent-duplicate');
   }
@@ -41,4 +43,29 @@ export function scoreCandidate(
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function normalizeUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.hash = '';
+    parsed.pathname = trimTrailingSlash(parsed.pathname);
+    parsed.searchParams.forEach((_, key) => {
+      const lowered = key.toLowerCase();
+      if (lowered === 'utm' || lowered.startsWith('utm_')) {
+        parsed.searchParams.delete(key);
+      }
+    });
+
+    return parsed.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function trimTrailingSlash(pathname: string): string {
+  if (pathname.length <= 1) {
+    return '/';
+  }
+  return pathname.replace(/\/+$/, '');
 }

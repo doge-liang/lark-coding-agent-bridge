@@ -3,7 +3,12 @@ import type { BunnyDraft } from './types';
 
 export type QualityResult = { ok: true; contentHash: string } | { ok: false; reason: string };
 
-const EARNINGS_PATTERNS = [/\bguarantees?\b.+\$\d+/i, /\$\d+[kK]?\/month/i, /\bpassive income\b/i];
+const EARNINGS_PATTERNS = [
+  /\b(?:guarantee|guarantees|guaranteed)\b[^$]{0,80}\$[\d,]+(?:\.\d+)?(?:\s*[kK])?(?:\s*\/\s*month\b)?/i,
+  /\b(?:make|earn|generate)\b[^$]{0,80}\$[\d,]+(?:\.\d+)?(?:\s*[kK])?(?:\s*\/\s*month\b)?/i,
+  /\$[\d,]+(?:\.\d+)?(?:\s*[kK])?(?:\s*\/\s*month\b)[^$]{0,80}\b(?:no work|without effort|zero effort)\b/i,
+  /\bpassive income\b/i,
+];
 
 export function checkDraftQuality(draft: BunnyDraft, recentContentHashes: Set<string>): QualityResult {
   if (!draft.sourceUrl || !/^https?:\/\//.test(draft.sourceUrl)) {

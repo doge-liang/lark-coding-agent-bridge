@@ -57,8 +57,15 @@ export class OpenAICompatibleBunnyGenerator implements BunnyGenerator {
       throw new Error(`LLM request failed: ${response.status}`);
     }
 
-    const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = json.choices?.[0]?.message?.content?.trim();
+    let json: unknown;
+    try {
+      json = await response.json();
+    } catch {
+      throw new Error('LLM response had no message content');
+    }
+
+    const choices = parseChoices(json);
+    const content = parseFirstMessageContent(choices);
     if (!content) {
       throw new Error('LLM response had no message content');
     }
@@ -78,4 +85,40 @@ export class OpenAICompatibleBunnyGenerator implements BunnyGenerator {
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function parseChoices(payload: unknown): Array<Record<string, unknown>> {
+  if (
+    typeof payload !== 'object' ||
+    payload === null ||
+    !('choices' in payload) ||
+    !Array.isArray(payload.choices)
+  ) {
+    throw new Error('LLM response had no message content');
+  }
+
+  return payload.choices as Array<Record<string, unknown>>;
+}
+
+function parseFirstMessageContent(choices: Array<Record<string, unknown>>): string | undefined {
+  if (choices.length === 0) {
+    return undefined;
+  }
+
+  const first = choices[0];
+  if (typeof first !== 'object' || first === null) {
+    return undefined;
+  }
+
+  const message = first.message;
+  if (!message || typeof message !== 'object') {
+    return undefined;
+  }
+
+  if (!('content' in message) || typeof (message as { content?: unknown }).content !== 'string') {
+    return undefined;
+  }
+
+  const content = (message as { content: string }).content.trim();
+  return content.length > 0 ? content : undefined;
 }

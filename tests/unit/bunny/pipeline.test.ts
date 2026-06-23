@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { scoreCandidate } from '../../../src/bunny/scoring';
-import { TemplateBunnyGenerator } from '../../../src/bunny/generator';
+import { OpenAICompatibleBunnyGenerator, TemplateBunnyGenerator } from '../../../src/bunny/generator';
 import { checkDraftQuality } from '../../../src/bunny/quality';
 import { planSchedule } from '../../../src/bunny/scheduler';
 
@@ -20,6 +20,23 @@ describe('Bunny content pipeline', () => {
 
     expect(scored.score).toBeGreaterThanOrEqual(80);
     expect(scored.reason).toContain('workflow');
+  });
+
+  it('normalizes urls when checking recent duplicate candidates', () => {
+    const scored = scoreCandidate(
+      {
+        id: 'cand-2',
+        sourceId: 'manual',
+        title: 'Build a browser agent workflow for research',
+        url: 'https://example.test/workflow/?utm_source=newsletter#overview',
+        summary: 'Step-by-step automation workflow for AI research.',
+        discoveredAt: '2026-06-23T00:00:00.000Z',
+      },
+      new Set(['https://example.test/workflow']),
+    );
+
+    expect(scored.score).toBeLessThan(80);
+    expect(scored.reason).toContain('recent-duplicate');
   });
 
   it('generates bilingual notes and English-first post text', async () => {
@@ -102,5 +119,86 @@ describe('Bunny content pipeline', () => {
     });
 
     expect(schedule[0]).toEqual({ draftId: 'draft-1', publishAt: '2026-06-24T12:00:00.000Z' });
+  });
+
+  it('validates OpenAI-compatible generator JSON payloads', async () => {
+    const generator = new OpenAICompatibleBunnyGenerator({
+      endpoint: 'https://example.test/v1/chat/completions',
+      apiKey: 'test-key',
+      model: 'gpt-test',
+    });
+    const topic = {
+      id: 'topic-1',
+      candidateId: 'cand-1',
+      title: 'Build a browser agent workflow for research',
+      url: 'https://example.test/workflow',
+      summary: 'Step-by-step automation workflow for AI research.',
+      score: 91,
+      reason: 'workflow tutorial',
+      createdAt: '2026-06-23T00:00:00.000Z',
+    };
+
+    const malformedPayloadMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      {
+        ok: true,
+        json: vi.fn().mockRejectedValue(new Error('bad json')),
+      } as unknown as Response,
+    );
+    await expect(
+      generator.generate(topic, '2026-06-23T00:01:00.000Z'),
+    ).rejects.toThrow('LLM response had no message content');
+    malformedPayloadMock.mockRestore();
+
+    const invalidPayloads = [
+      { label: 'missing choices', payload: {} },
+      { label: 'empty choices', payload: { choices: [] } },
+      { label: 'missing message', payload: { choices: [{}] } },
+      { label: 'non-string content', payload: { choices: [{ message: { content: 1 } }] } },
+      { label: 'empty content', payload: { choices: [{ message: { content: '' } }] } },
+    ];
+    for (const { payload } of invalidPayloads) {
+      const invalidPayloadMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue(payload),
+      } as unknown as Response);
+      await expect(generator.generate(topic, '2026-06-23T00:01:00.000Z')).rejects.toThrow(
+        'LLM response had no message content',
+      );
+      invalidPayloadMock.mockRestore();
+    }
+  });
+
+  it('accepts valid OpenAI-compatible generator JSON payloads', async () => {
+    const generator = new OpenAICompatibleBunnyGenerator({
+      endpoint: 'https://example.test/v1/chat/completions',
+      apiKey: 'test-key',
+      model: 'gpt-test',
+    });
+    const topic = {
+      id: 'topic-1',
+      candidateId: 'cand-1',
+      title: 'Build a browser agent workflow for research',
+      url: 'https://example.test/workflow',
+      summary: 'Step-by-step automation workflow for AI research.',
+      score: 91,
+      reason: 'workflow tutorial',
+      createdAt: '2026-06-23T00:00:00.000Z',
+    };
+    const validPayloadMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: 'AI workflow guide generated for research.',
+            },
+          },
+        ],
+      }),
+    } as unknown as Response);
+
+    const draft = await generator.generate(topic, '2026-06-23T00:01:00.000Z');
+    expect(draft.englishText).toBe('AI workflow guide generated for research.');
+    validPayloadMock.mockRestore();
   });
 });
