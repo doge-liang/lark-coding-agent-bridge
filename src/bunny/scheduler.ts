@@ -13,7 +13,7 @@ const UTC_SLOTS = [12, 18];
 
 export function planSchedule(input: PlanScheduleInput): PlannedSchedule[] {
   const now = new Date(input.nowIso);
-  const day = input.nowIso.slice(0, 10);
+  const day = utcDateKey(now);
 
   return input.draftIds.slice(0, input.dailyLimit).map((draftId, index) => {
     const hour = UTC_SLOTS[index] ?? UTC_SLOTS.at(-1) ?? 18;
@@ -24,4 +24,11 @@ export function planSchedule(input: PlanScheduleInput): PlannedSchedule[] {
 
     return { draftId, publishAt: publishAt.toISOString() };
   });
+}
+
+function utcDateKey(date: Date): string {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }

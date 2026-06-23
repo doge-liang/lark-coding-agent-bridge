@@ -60,21 +60,25 @@ describe('Bunny content pipeline', () => {
       ),
     ).toEqual({ ok: false, reason: 'unsupported earnings claim' });
 
-    expect(
-      checkDraftQuality(
-        {
-          id: 'draft-2',
-          topicId: 'topic-1',
-          kind: 'single',
-          chineseNote: '中文理解版',
-          englishText: 'A practical AI workflow for faster research: source, summarize, verify, publish.',
-          sourceUrl: 'https://example.test/workflow',
-          status: 'draft',
-          createdAt: '2026-06-23T00:01:00.000Z',
-        },
-        new Set(),
-      ),
-    ).toEqual({ ok: true });
+    const qualityResult = checkDraftQuality(
+      {
+        id: 'draft-2',
+        topicId: 'topic-1',
+        kind: 'single',
+        chineseNote: '中文理解版',
+        englishText: 'A practical AI workflow for faster research: source, summarize, verify, publish.',
+        sourceUrl: 'https://example.test/workflow',
+        status: 'draft',
+        createdAt: '2026-06-23T00:01:00.000Z',
+      },
+      new Set(),
+    );
+
+    expect(qualityResult).toMatchObject({ ok: true });
+    expect(typeof qualityResult).toBe('object');
+    if ('contentHash' in qualityResult) {
+      expect(typeof qualityResult.contentHash).toBe('string');
+    }
   });
 
   it('schedules within conservative V1 cadence', () => {
@@ -88,5 +92,15 @@ describe('Bunny content pipeline', () => {
       { draftId: 'draft-1', publishAt: '2026-06-23T12:00:00.000Z' },
       { draftId: 'draft-2', publishAt: '2026-06-23T18:00:00.000Z' },
     ]);
+  });
+
+  it('uses UTC-local date when scheduling from offset timestamps', () => {
+    const schedule = planSchedule({
+      draftIds: ['draft-1', 'draft-2'],
+      nowIso: '2026-06-23T23:30:00-02:00',
+      dailyLimit: 2,
+    });
+
+    expect(schedule[0]).toEqual({ draftId: 'draft-1', publishAt: '2026-06-24T12:00:00.000Z' });
   });
 });

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { BunnyDraft } from './types';
 
-export type QualityResult = { ok: true } | { ok: false; reason: string };
+export type QualityResult = { ok: true; contentHash: string } | { ok: false; reason: string };
 
 const EARNINGS_PATTERNS = [/\bguarantees?\b.+\$\d+/i, /\$\d+[kK]?\/month/i, /\bpassive income\b/i];
 
@@ -27,7 +27,7 @@ export function checkDraftQuality(draft: BunnyDraft, recentContentHashes: Set<st
     return { ok: false, reason: 'duplicate content' };
   }
 
-  return { ok: true };
+  return { ok: true, contentHash };
 }
 
 export function postKeyForDraft(draft: BunnyDraft): string {
