@@ -28,7 +28,7 @@ describe('Bunny content pipeline', () => {
         id: 'cand-2',
         sourceId: 'manual',
         title: 'Build a browser agent workflow for research',
-        url: 'https://example.test/workflow/?utm_source=newsletter#overview',
+        url: 'https://example.test/workflow/?utm_source=newsletter&utm_medium=email#section',
         summary: 'Step-by-step automation workflow for AI research.',
         discoveredAt: '2026-06-23T00:00:00.000Z',
       },
@@ -77,6 +77,38 @@ describe('Bunny content pipeline', () => {
       ),
     ).toEqual({ ok: false, reason: 'unsupported earnings claim' });
 
+    expect(
+      checkDraftQuality(
+        {
+          id: 'draft-3',
+          topicId: 'topic-1',
+          kind: 'single',
+          chineseNote: '中文理解版',
+          englishText: 'This can make $10k/month with no work, no effort, and no personal follow-up required.',
+          sourceUrl: 'https://example.test/workflow',
+          status: 'draft',
+          createdAt: '2026-06-23T00:01:00.000Z',
+        },
+        new Set(),
+      ),
+    ).toEqual({ ok: false, reason: 'unsupported earnings claim' });
+
+    expect(
+      checkDraftQuality(
+        {
+          id: 'draft-4',
+          topicId: 'topic-1',
+          kind: 'single',
+          chineseNote: '中文理解版',
+          englishText: 'It generates $10k/month for the lucky few with zero maintenance and almost no actions needed.',
+          sourceUrl: 'https://example.test/workflow',
+          status: 'draft',
+          createdAt: '2026-06-23T00:01:00.000Z',
+        },
+        new Set(),
+      ),
+    ).toEqual({ ok: false, reason: 'unsupported earnings claim' });
+
     const qualityResult = checkDraftQuality(
       {
         id: 'draft-2',
@@ -96,6 +128,23 @@ describe('Bunny content pipeline', () => {
     if ('contentHash' in qualityResult) {
       expect(typeof qualityResult.contentHash).toBe('string');
     }
+
+    expect(
+      checkDraftQuality(
+        {
+          id: 'draft-5',
+          topicId: 'topic-1',
+          kind: 'single',
+          chineseNote: '中文理解版',
+          englishText:
+            'This tool costs $20/month for teams, with annual billing available and no hidden fees for the service.',
+          status: 'draft',
+          createdAt: '2026-06-23T00:01:00.000Z',
+          sourceUrl: 'https://example.test/workflow',
+        },
+        new Set(),
+      ),
+    ).toMatchObject({ ok: true });
   });
 
   it('schedules within conservative V1 cadence', () => {

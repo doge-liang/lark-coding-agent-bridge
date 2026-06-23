@@ -50,12 +50,13 @@ function normalizeUrl(rawUrl: string): string {
     const parsed = new URL(rawUrl);
     parsed.hash = '';
     parsed.pathname = trimTrailingSlash(parsed.pathname);
-    parsed.searchParams.forEach((_, key) => {
+    const keysToDelete = [...parsed.searchParams.keys()].filter((key) => {
       const lowered = key.toLowerCase();
-      if (lowered === 'utm' || lowered.startsWith('utm_')) {
-        parsed.searchParams.delete(key);
-      }
+      return lowered === 'utm' || lowered.startsWith('utm_');
     });
+    for (const key of keysToDelete) {
+      parsed.searchParams.delete(key);
+    }
 
     return parsed.toString();
   } catch {

@@ -5,7 +5,7 @@ export type QualityResult = { ok: true; contentHash: string } | { ok: false; rea
 
 const EARNINGS_PATTERNS = [
   /\b(?:guarantee|guarantees|guaranteed)\b[^$]{0,80}\$[\d,]+(?:\.\d+)?(?:\s*[kK])?(?:\s*\/\s*month\b)?/i,
-  /\b(?:make|earn|generate)\b[^$]{0,80}\$[\d,]+(?:\.\d+)?(?:\s*[kK])?(?:\s*\/\s*month\b)?/i,
+  /\b(?:make|makes|making|made|earn|earns|earned|generate|generates|generated|generating)\b[^$]{0,80}\$[\d,]+(?:\.\d+)?(?:\s*[kK])?(?:\s*\/\s*month\b)?/i,
   /\$[\d,]+(?:\.\d+)?(?:\s*[kK])?(?:\s*\/\s*month\b)[^$]{0,80}\b(?:no work|without effort|zero effort)\b/i,
   /\bpassive income\b/i,
 ];
