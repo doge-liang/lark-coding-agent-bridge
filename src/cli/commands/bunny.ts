@@ -5,7 +5,7 @@ import { OpenAICompatibleBunnyGenerator } from '../../bunny/generator';
 import { startBunnyServer } from '../../bunny/server';
 import { BunnyStore } from '../../bunny/store';
 import { resolveAppPaths } from '../../config/app-paths';
-import { readActiveProfile } from '../../config/profile-store';
+import { loadRootConfig, readActiveProfile } from '../../config/profile-store';
 
 export interface BunnyCliOptions {
   profile?: string;
@@ -84,9 +84,21 @@ async function resolveBunnyDbFile(opts: BunnyCliOptions): Promise<string> {
     ? appPathHintFromConfig(configPath)
     : {};
   const rootDir = configHint.rootDir;
-  const profile = opts.profile ?? configHint.profile ?? (await readActiveProfile(rootDir)) ?? undefined;
+  const profile = opts.profile
+    ?? configHint.profile
+    ?? (await readActiveProfile(rootDir))
+    ?? (await readRootConfigActiveProfile(configPath, rootDir))
+    ?? undefined;
   const appPaths = resolveAppPaths({ rootDir, ...(profile ? { profile } : {}) });
   return resolveBunnyPaths(appPaths).dbFile;
+}
+
+async function readRootConfigActiveProfile(
+  configPath: string | undefined,
+  rootDir: string | undefined,
+): Promise<string | undefined> {
+  const rootConfigPath = configPath ?? resolveAppPaths({ rootDir }).configFile;
+  return (await loadRootConfig(rootConfigPath))?.activeProfile;
 }
 
 function appPathHintFromConfig(configPath: string): { rootDir: string; profile?: string } {
