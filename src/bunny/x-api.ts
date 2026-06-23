@@ -38,14 +38,23 @@ export class XApiAdapter {
       };
     }
 
-    const response = await this.fetchImpl('https://api.x.com/2/tweets', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${this.options.bearerToken}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ text: input.text }),
-    });
+    let response: Response;
+    try {
+      response = await this.fetchImpl('https://api.x.com/2/tweets', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${this.options.bearerToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ text: input.text }),
+      });
+    } catch {
+      return {
+        status: 'retryable-error',
+        postKey: input.postKey,
+        message: 'X API network error',
+      };
+    }
 
     if (!response.ok) {
       const status = response.status === 429 || response.status >= 500 ? 'retryable-error' : 'terminal-error';
@@ -56,8 +65,32 @@ export class XApiAdapter {
       };
     }
 
-    const json = (await response.json()) as { data?: { id?: string } };
-    const xPostId = json.data?.id;
+    let json: unknown;
+    try {
+      json = await response.json();
+    } catch {
+      return {
+        status: 'terminal-error',
+        postKey: input.postKey,
+        message: 'X API response invalid JSON',
+      };
+    }
+
+    if (
+      typeof json !== 'object' ||
+      json === null ||
+      typeof (json as { data?: unknown }).data !== 'object' ||
+      (json as { data?: unknown }).data === null
+    ) {
+      return {
+        status: 'terminal-error',
+        postKey: input.postKey,
+        message: 'X API response missing post id',
+      };
+    }
+
+    const data = (json as { data?: { id?: unknown } }).data;
+    const xPostId = typeof data?.id === 'string' && data.id.trim().length > 0 ? data.id : undefined;
     if (!xPostId) {
       return {
         status: 'terminal-error',
