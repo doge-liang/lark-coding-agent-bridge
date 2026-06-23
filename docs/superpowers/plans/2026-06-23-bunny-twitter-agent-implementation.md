@@ -1,5 +1,13 @@
 # Bunny Twitter Agent Implementation Plan
 
+> **Status:** Superseded after user review on 2026-06-23. Do not continue this
+> plan from Task 6 onward. The approved direction changed from
+> `/bunny`/CLI control surfaces to an Andy-like Bunny agent with its own system
+> prompt, explicit business skills, hooks, Feishu/Lark menu/card surfaces, and
+> repo-managed artifacts. Tasks 1-5 remain useful foundation work. Task 6's
+> CLI/server work must be removed or refactored by the replacement plan. A new
+> implementation plan should be written after the revised spec is reviewed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build Bunny as an AI tools X/Twitter media agent with dry-run content operations, live X publishing behind explicit configuration, and a thin `/bunny` Feishu/Lark control surface.
