@@ -70,7 +70,8 @@ export class BunnyStore {
   }
 
   listCandidates(): BunnyCandidate[] {
-    return this.db.prepare('select * from candidates order by discovered_at desc').all().map(candidateFromRow);
+    const rows = this.db.prepare('select * from candidates order by discovered_at desc').all() as Row[];
+    return rows.map(candidateFromRow);
   }
 
   saveTopic(topic: BunnyTopic): void {
@@ -91,7 +92,8 @@ export class BunnyStore {
   }
 
   listTopics(): BunnyTopic[] {
-    return this.db.prepare('select * from topics order by score desc, created_at desc').all().map(topicFromRow);
+    const rows = this.db.prepare('select * from topics order by score desc, created_at desc').all() as Row[];
+    return rows.map(topicFromRow);
   }
 
   saveDraft(draft: BunnyDraft): void {
@@ -113,7 +115,8 @@ export class BunnyStore {
   }
 
   listDrafts(): BunnyDraft[] {
-    return this.db.prepare('select * from drafts order by created_at desc').all().map(draftFromRow);
+    const rows = this.db.prepare('select * from drafts order by created_at desc').all() as Row[];
+    return rows.map(draftFromRow);
   }
 
   schedulePost(post: BunnyScheduledPost): void {
@@ -138,18 +141,19 @@ export class BunnyStore {
   }
 
   listScheduled(): BunnyScheduledPost[] {
-    return this.db.prepare('select * from scheduled_posts order by publish_at asc').all().map(scheduledFromRow);
+    const rows = this.db.prepare('select * from scheduled_posts order by publish_at asc').all() as Row[];
+    return rows.map(scheduledFromRow);
   }
 
   claimDuePosts(nowIso: string): BunnyScheduledPost[] {
-    return this.db
+    const rows = this.db
       .prepare(`
         select * from scheduled_posts
         where status = 'scheduled' and publish_at <= ?
         order by publish_at asc
       `)
-      .all(nowIso)
-      .map(scheduledFromRow);
+      .all(nowIso) as Row[];
+    return rows.map(scheduledFromRow);
   }
 
   markPublished(postKey: string, xPostId: string, xPostUrl: string, nowIso: string): void {
@@ -200,29 +204,31 @@ export class BunnyStore {
     replies: number;
     capturedAt: string;
   }> {
-    return this.db.prepare('select * from metrics where post_key = ? order by captured_at desc').all(postKey).map(
-      (row: Row) => ({
-        postKey: String(row.post_key),
-        impressions: Number(row.impressions),
-        likes: Number(row.likes),
-        reposts: Number(row.reposts),
-        replies: Number(row.replies),
-        capturedAt: String(row.captured_at),
-      }),
-    );
+    const rows = this.db
+      .prepare('select * from metrics where post_key = ? order by captured_at desc')
+      .all(postKey) as Row[];
+    return rows.map((row) => ({
+      postKey: String(row.post_key),
+      impressions: Number(row.impressions),
+      likes: Number(row.likes),
+      reposts: Number(row.reposts),
+      replies: Number(row.replies),
+      capturedAt: String(row.captured_at),
+    }));
   }
 
   today(nowIso: string): BunnyToday {
     const day = nowIso.slice(0, 10);
+    const rows = this.db
+      .prepare(`
+        select * from scheduled_posts
+        where substr(publish_at, 1, 10) = ?
+        order by publish_at asc
+      `)
+      .all(day) as Row[];
+
     return {
-      scheduled: this.db
-        .prepare(`
-          select * from scheduled_posts
-          where substr(publish_at, 1, 10) = ?
-          order by publish_at asc
-        `)
-        .all(day)
-        .map(scheduledFromRow),
+      scheduled: rows.map(scheduledFromRow),
       drafts: this.listDrafts().slice(0, 10),
     };
   }

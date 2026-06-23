@@ -59,6 +59,7 @@ describe('BunnyStore', () => {
       status: 'draft',
       createdAt: '2026-06-23T00:01:00.000Z',
     });
+    expect(store.listDrafts()).toHaveLength(1);
     store.schedulePost({
       id: 'sched-1',
       draftId: 'draft-1',
