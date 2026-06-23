@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { candidatesFromFeedXml, manualCandidate } from '../../../src/bunny/sources';
 
 describe('Bunny sources', () => {
@@ -31,17 +32,21 @@ describe('Bunny sources', () => {
   });
 
   it('creates manual candidates from user-submitted links', () => {
-    expect(
-      manualCandidate({
-        title: 'AI workflow checklist',
-        url: 'https://example.test/checklist',
+    const candidate = manualCandidate({
+      title: 'AI workflow checklist',
+      url: '   https://example.test/checklist   ',
         summary: 'A checklist for evaluating AI tools.',
-        nowIso: '2026-06-23T11:00:00.000Z',
-      }),
-    ).toMatchObject({
+      nowIso: '2026-06-23T11:00:00.000Z',
+    });
+
+    const url = 'https://example.test/checklist';
+    const expectedId = `manual:${createHash('sha256').update(url).digest('hex').slice(0, 12)}`;
+
+    expect(candidate).toMatchObject({
+      id: expectedId,
       sourceId: 'manual',
       title: 'AI workflow checklist',
-      url: 'https://example.test/checklist',
+      url,
     });
   });
 });

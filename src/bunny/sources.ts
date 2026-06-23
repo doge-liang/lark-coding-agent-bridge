@@ -32,11 +32,12 @@ export function manualCandidate(input: {
   summary: string;
   nowIso: string;
 }): BunnyCandidate {
+  const url = input.url.trim();
   return {
-    id: `manual:${hash(input.url).slice(0, 12)}`,
+    id: `manual:${hash(url).slice(0, 12)}`,
     sourceId: 'manual',
     title: input.title.trim(),
-    url: input.url.trim(),
+    url,
     summary: input.summary.trim(),
     discoveredAt: input.nowIso,
   };
