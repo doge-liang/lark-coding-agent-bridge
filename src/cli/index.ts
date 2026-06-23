@@ -1,6 +1,13 @@
 import { Command } from 'commander';
 import pkg from '../../package.json';
 import { formatAgentPreflightDiagnostic, getAgentPreflightDiagnostic } from '../agent/preflight';
+import {
+  runBunnyPause,
+  runBunnyResume,
+  runBunnyRunOnce,
+  runBunnyServe,
+  runBunnyStatus,
+} from './commands/bunny';
 import { runMigrate } from './commands/migrate';
 import { runKillCli, runPs } from './commands/ps';
 import {
@@ -240,6 +247,65 @@ secrets
   .action(async (opts: { appId: string; profile?: string }) => {
     await runSecretsRemove(opts.appId, { profile: opts.profile });
   });
+
+const bunny = program
+  .command('bunny')
+  .description('Run and inspect the Bunny AI tools media agent');
+
+bunny
+  .command('serve')
+  .description('Start the Bunny local HTTP server')
+  .option('--profile <name>', 'profile name (defaults to active profile)')
+  .option('-c, --config <path>', 'path to config file')
+  .option('--host <host>', 'host to bind (default 127.0.0.1)')
+  .option('--port <port>', 'port to bind (default 3827)', parsePort)
+  .action(async (opts: { profile?: string; config?: string; host?: string; port?: number }) => {
+    await runBunnyServe(opts);
+  });
+
+bunny
+  .command('run-once')
+  .description('Run one Bunny pipeline pass')
+  .option('--profile <name>', 'profile name (defaults to active profile)')
+  .option('-c, --config <path>', 'path to config file')
+  .action(async (opts: { profile?: string; config?: string }) => {
+    await runBunnyRunOnce(opts);
+  });
+
+bunny
+  .command('status')
+  .description('Show Bunny status')
+  .option('--profile <name>', 'profile name (defaults to active profile)')
+  .option('-c, --config <path>', 'path to config file')
+  .action(async (opts: { profile?: string; config?: string }) => {
+    await runBunnyStatus(opts);
+  });
+
+bunny
+  .command('pause')
+  .description('Pause Bunny publishing')
+  .option('--profile <name>', 'profile name (defaults to active profile)')
+  .option('-c, --config <path>', 'path to config file')
+  .action(async (opts: { profile?: string; config?: string }) => {
+    await runBunnyPause(opts);
+  });
+
+bunny
+  .command('resume')
+  .description('Resume Bunny publishing')
+  .option('--profile <name>', 'profile name (defaults to active profile)')
+  .option('-c, --config <path>', 'path to config file')
+  .action(async (opts: { profile?: string; config?: string }) => {
+    await runBunnyResume(opts);
+  });
+
+function parsePort(value: string): number {
+  const port = Number.parseInt(value, 10);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`invalid port: ${value}`);
+  }
+  return port;
+}
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   const diagnostic = getAgentPreflightDiagnostic(err);
