@@ -5,6 +5,8 @@ import { defaultBunnySettings } from './config';
 import type {
   BunnyCandidate,
   BunnyDraft,
+  BunnyPostKind,
+  BunnyPostStatus,
   BunnyScheduledPost,
   BunnySettings,
   BunnyStatus,
@@ -13,6 +15,9 @@ import type {
 } from './types';
 
 type Row = Record<string, unknown>;
+
+const validKinds: BunnyPostKind[] = ['single', 'thread'];
+const validStatuses: BunnyPostStatus[] = ['draft', 'scheduled', 'publishing', 'published', 'failed', 'skipped'];
 
 export class BunnyStore {
   private readonly db: Database.Database;
@@ -123,11 +128,11 @@ export class BunnyStore {
     this.db
       .prepare(`
         insert into scheduled_posts(id, draft_id, post_key, publish_at, status, x_post_id, x_post_url, error_message)
-        values(@id, @draftId, @postKey, @publishAt, @status, @xPostId, @xPostUrl, @errorMessage)
+        values(@id, @draftId, @postKey, @publishAt, 'scheduled', @xPostId, @xPostUrl, @errorMessage)
         on conflict(post_key) do update set
           draft_id = excluded.draft_id,
           publish_at = excluded.publish_at,
-          status = excluded.status,
+          status = 'scheduled',
           x_post_id = excluded.x_post_id,
           x_post_url = excluded.x_post_url,
           error_message = excluded.error_message
@@ -146,36 +151,59 @@ export class BunnyStore {
   }
 
   claimDuePosts(nowIso: string): BunnyScheduledPost[] {
-    const rows = this.db
-      .prepare(`
-        select * from scheduled_posts
-        where status = 'scheduled' and publish_at <= ?
-        order by publish_at asc
-      `)
-      .all(nowIso) as Row[];
-    return rows.map(scheduledFromRow);
+    const selectDue = this.db.prepare(`
+      select * from scheduled_posts
+      where status = 'scheduled' and publish_at <= ?
+      order by publish_at asc
+    `);
+    const claimRows = this.db.prepare(`
+      update scheduled_posts
+      set status = 'publishing'
+      where id = @id and status = 'scheduled'
+    `);
+
+    const transaction = this.db.transaction(() => {
+      const rows = selectDue.all(nowIso) as Row[];
+      if (rows.length === 0) return [];
+
+      for (const row of rows) {
+        claimRows.run({ id: String(row.id) });
+      }
+
+      return rows.map((row) => ({
+        ...row,
+        status: 'publishing',
+      }));
+    });
+
+    const claimed = transaction();
+    return (claimed as Row[]).map(scheduledFromRow);
   }
 
   markPublished(postKey: string, xPostId: string, xPostUrl: string, nowIso: string): void {
-    this.db
+    const result = this.db
       .prepare(`
         update scheduled_posts
         set status = 'published', x_post_id = ?, x_post_url = ?, error_message = null
-        where post_key = ?
+        where post_key = ? and status = 'publishing'
       `)
       .run(xPostId, xPostUrl, postKey);
-    this.recordEvent('published', `${postKey} ${xPostId}`, nowIso);
+    if (result.changes > 0) {
+      this.recordEvent('published', `${postKey} ${xPostId}`, nowIso);
+    }
   }
 
   markFailed(postKey: string, errorMessage: string): void {
-    this.db
+    const result = this.db
       .prepare(`
         update scheduled_posts
         set status = 'failed', error_message = ?
-        where post_key = ?
+        where post_key = ? and status = 'publishing'
       `)
       .run(errorMessage, postKey);
-    this.recordEvent('publish_failed', `${postKey} ${errorMessage}`);
+    if (result.changes > 0) {
+      this.recordEvent('publish_failed', `${postKey} ${errorMessage}`);
+    }
   }
 
   recordMetric(input: {
@@ -296,11 +324,11 @@ export class BunnyStore {
       create table if not exists drafts(
         id text primary key,
         topic_id text not null,
-        kind text not null,
+        kind text not null check (kind in ('single','thread')),
         chinese_note text not null,
         english_text text not null,
         source_url text not null,
-        status text not null,
+        status text not null check (status in ('draft','scheduled','publishing','published','failed','skipped')),
         quality_failure text,
         created_at text not null
       );
@@ -309,7 +337,7 @@ export class BunnyStore {
         draft_id text not null,
         post_key text not null unique,
         publish_at text not null,
-        status text not null,
+        status text not null check (status in ('draft','scheduled','publishing','published','failed','skipped')),
         x_post_id text,
         x_post_url text,
         error_message text
@@ -354,11 +382,11 @@ function draftFromRow(row: Row): BunnyDraft {
   return {
     id: String(row.id),
     topicId: String(row.topic_id),
-    kind: String(row.kind) === 'thread' ? 'thread' : 'single',
+    kind: parseBunnyPostKind(row.kind),
     chineseNote: String(row.chinese_note),
     englishText: String(row.english_text),
     sourceUrl: String(row.source_url),
-    status: String(row.status) as BunnyDraft['status'],
+    status: parseBunnyPostStatus(row.status),
     ...(row.quality_failure ? { qualityFailure: String(row.quality_failure) } : {}),
     createdAt: String(row.created_at),
   };
@@ -383,9 +411,33 @@ function scheduledFromRow(row: Row): BunnyScheduledPost {
     draftId: String(row.draft_id),
     postKey: String(row.post_key),
     publishAt: String(row.publish_at),
-    status: String(row.status) as BunnyScheduledPost['status'],
+    status: parseBunnyPostStatus(row.status),
     ...(row.x_post_id ? { xPostId: String(row.x_post_id) } : {}),
     ...(row.x_post_url ? { xPostUrl: String(row.x_post_url) } : {}),
     ...(row.error_message ? { errorMessage: String(row.error_message) } : {}),
   };
+}
+
+function parseBunnyPostKind(rawKind: unknown): BunnyPostKind {
+  if (isBunnyPostKind(rawKind)) {
+    return rawKind;
+  }
+  throw new Error(`invalid bunny post kind: ${String(rawKind)}`);
+}
+
+function parseBunnyPostStatus(rawStatus: unknown): BunnyPostStatus {
+  if (isBunnyPostStatus(rawStatus)) {
+    return rawStatus;
+  }
+  throw new Error(`invalid bunny post status: ${String(rawStatus)}`);
+}
+
+function isBunnyPostKind(rawKind: unknown): rawKind is BunnyPostKind {
+  return typeof rawKind === 'string' && validKinds.includes(rawKind as BunnyPostKind);
+}
+
+function isBunnyPostStatus(rawStatus: unknown): rawStatus is BunnyPostStatus {
+  return (
+    typeof rawStatus === 'string' && validStatuses.includes(rawStatus as BunnyPostStatus)
+  );
 }
