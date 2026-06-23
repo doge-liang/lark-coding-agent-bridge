@@ -90,7 +90,7 @@ export class XApiAdapter {
     }
 
     const data = (json as { data?: { id?: unknown } }).data;
-    const xPostId = typeof data?.id === 'string' && data.id.trim().length > 0 ? data.id : undefined;
+    const xPostId = typeof data?.id === 'string' ? data.id.trim() : undefined;
     if (!xPostId) {
       return {
         status: 'terminal-error',

@@ -52,6 +52,25 @@ describe('XApiAdapter', () => {
     );
   });
 
+  it('trims whitespace from returned X post id', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ data: { id: ' 12345 ' } }), { status: 201 }));
+    const adapter = new XApiAdapter({
+      livePublishing: true,
+      bearerToken: 'token',
+      fetchImpl,
+    });
+
+    await expect(adapter.publish({
+      postKey: 'post-key',
+      text: 'AI workflow post',
+    })).resolves.toEqual({
+      status: 'published',
+      postKey: 'post-key',
+      xPostId: '12345',
+      xPostUrl: 'https://x.com/i/web/status/12345',
+    });
+  });
+
   it('classifies API errors without leaking tokens', async () => {
     const fetchImpl = vi.fn(async () => new Response('rate limit', { status: 429 }));
     const adapter = new XApiAdapter({
