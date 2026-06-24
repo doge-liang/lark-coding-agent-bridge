@@ -16,4 +16,11 @@ describe('CLI command registration', () => {
     const appSecretOptions = source.match(/--app-secret <secret>/g) ?? [];
     expect(appSecretOptions.length).toBeGreaterThanOrEqual(3);
   });
+
+  it('does not register the superseded Bunny command group', async () => {
+    const help = await readFile(join(process.cwd(), 'src', 'cli', 'index.ts'), 'utf8');
+
+    expect(help).not.toContain("command('bunny')");
+    expect(help).not.toContain('Run and inspect the Bunny AI tools media agent');
+  });
 });

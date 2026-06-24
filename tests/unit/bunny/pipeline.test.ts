@@ -1,0 +1,253 @@
+import { describe, expect, it, vi } from 'vitest';
+import { scoreCandidate } from '../../../src/bunny/scoring';
+import { OpenAICompatibleBunnyGenerator, TemplateBunnyGenerator } from '../../../src/bunny/generator';
+import { checkDraftQuality } from '../../../src/bunny/quality';
+import { planSchedule } from '../../../src/bunny/scheduler';
+
+describe('Bunny content pipeline', () => {
+  it('scores workflow tutorials above generic announcements', () => {
+    const scored = scoreCandidate(
+      {
+        id: 'cand-1',
+        sourceId: 'manual',
+        title: 'Build a browser agent workflow for research',
+        url: 'https://example.test/workflow',
+        summary: 'Step-by-step automation workflow for AI research.',
+        discoveredAt: '2026-06-23T00:00:00.000Z',
+      },
+      new Set(),
+    );
+
+    expect(scored.score).toBeGreaterThanOrEqual(80);
+    expect(scored.reason).toContain('workflow');
+  });
+
+  it('normalizes urls when checking recent duplicate candidates', () => {
+    const scored = scoreCandidate(
+      {
+        id: 'cand-2',
+        sourceId: 'manual',
+        title: 'Build a browser agent workflow for research',
+        url: 'https://example.test/workflow/?utm_source=newsletter&utm_medium=email#section',
+        summary: 'Step-by-step automation workflow for AI research.',
+        discoveredAt: '2026-06-23T00:00:00.000Z',
+      },
+      new Set(['https://example.test/workflow']),
+    );
+
+    expect(scored.score).toBeLessThan(80);
+    expect(scored.reason).toContain('recent-duplicate');
+  });
+
+  it('generates bilingual notes and English-first post text', async () => {
+    const generator = new TemplateBunnyGenerator();
+    const draft = await generator.generate(
+      {
+        id: 'topic-1',
+        candidateId: 'cand-1',
+        title: 'Build a browser agent workflow for research',
+        url: 'https://example.test/workflow',
+        summary: 'Step-by-step automation workflow for AI research.',
+        score: 91,
+        reason: 'workflow tutorial',
+        createdAt: '2026-06-23T00:00:00.000Z',
+      },
+      '2026-06-23T00:01:00.000Z',
+    );
+
+    expect(draft.chineseNote).toContain('中文理解');
+    expect(draft.englishText).toContain('AI workflow');
+    expect(draft.sourceUrl).toBe('https://example.test/workflow');
+  });
+
+  it('rejects unsupported earnings claims and accepts sourced workflow drafts', () => {
+    expect(
+      checkDraftQuality(
+        {
+          id: 'draft-1',
+          topicId: 'topic-1',
+          kind: 'single',
+          chineseNote: '中文理解版',
+          englishText: 'This tool guarantees $10k/month with no work.',
+          sourceUrl: 'https://example.test/workflow',
+          status: 'draft',
+          createdAt: '2026-06-23T00:01:00.000Z',
+        },
+        new Set(),
+      ),
+    ).toEqual({ ok: false, reason: 'unsupported earnings claim' });
+
+    expect(
+      checkDraftQuality(
+        {
+          id: 'draft-3',
+          topicId: 'topic-1',
+          kind: 'single',
+          chineseNote: '中文理解版',
+          englishText: 'This can make $10k/month with no work, no effort, and no personal follow-up required.',
+          sourceUrl: 'https://example.test/workflow',
+          status: 'draft',
+          createdAt: '2026-06-23T00:01:00.000Z',
+        },
+        new Set(),
+      ),
+    ).toEqual({ ok: false, reason: 'unsupported earnings claim' });
+
+    expect(
+      checkDraftQuality(
+        {
+          id: 'draft-4',
+          topicId: 'topic-1',
+          kind: 'single',
+          chineseNote: '中文理解版',
+          englishText: 'It generates $10k/month for the lucky few with zero maintenance and almost no actions needed.',
+          sourceUrl: 'https://example.test/workflow',
+          status: 'draft',
+          createdAt: '2026-06-23T00:01:00.000Z',
+        },
+        new Set(),
+      ),
+    ).toEqual({ ok: false, reason: 'unsupported earnings claim' });
+
+    const qualityResult = checkDraftQuality(
+      {
+        id: 'draft-2',
+        topicId: 'topic-1',
+        kind: 'single',
+        chineseNote: '中文理解版',
+        englishText: 'A practical AI workflow for faster research: source, summarize, verify, publish.',
+        sourceUrl: 'https://example.test/workflow',
+        status: 'draft',
+        createdAt: '2026-06-23T00:01:00.000Z',
+      },
+      new Set(),
+    );
+
+    expect(qualityResult).toMatchObject({ ok: true });
+    expect(typeof qualityResult).toBe('object');
+    if ('contentHash' in qualityResult) {
+      expect(typeof qualityResult.contentHash).toBe('string');
+    }
+
+    expect(
+      checkDraftQuality(
+        {
+          id: 'draft-5',
+          topicId: 'topic-1',
+          kind: 'single',
+          chineseNote: '中文理解版',
+          englishText:
+            'This tool costs $20/month for teams, with annual billing available and no hidden fees for the service.',
+          status: 'draft',
+          createdAt: '2026-06-23T00:01:00.000Z',
+          sourceUrl: 'https://example.test/workflow',
+        },
+        new Set(),
+      ),
+    ).toMatchObject({ ok: true });
+  });
+
+  it('schedules within conservative V1 cadence', () => {
+    const schedule = planSchedule({
+      draftIds: ['draft-1', 'draft-2', 'draft-3'],
+      nowIso: '2026-06-23T08:00:00.000Z',
+      dailyLimit: 2,
+    });
+
+    expect(schedule).toEqual([
+      { draftId: 'draft-1', publishAt: '2026-06-23T12:00:00.000Z' },
+      { draftId: 'draft-2', publishAt: '2026-06-23T18:00:00.000Z' },
+    ]);
+  });
+
+  it('uses UTC-local date when scheduling from offset timestamps', () => {
+    const schedule = planSchedule({
+      draftIds: ['draft-1', 'draft-2'],
+      nowIso: '2026-06-23T23:30:00-02:00',
+      dailyLimit: 2,
+    });
+
+    expect(schedule[0]).toEqual({ draftId: 'draft-1', publishAt: '2026-06-24T12:00:00.000Z' });
+  });
+
+  it('validates OpenAI-compatible generator JSON payloads', async () => {
+    const generator = new OpenAICompatibleBunnyGenerator({
+      endpoint: 'https://example.test/v1/chat/completions',
+      apiKey: 'test-key',
+      model: 'gpt-test',
+    });
+    const topic = {
+      id: 'topic-1',
+      candidateId: 'cand-1',
+      title: 'Build a browser agent workflow for research',
+      url: 'https://example.test/workflow',
+      summary: 'Step-by-step automation workflow for AI research.',
+      score: 91,
+      reason: 'workflow tutorial',
+      createdAt: '2026-06-23T00:00:00.000Z',
+    };
+
+    const malformedPayloadMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      {
+        ok: true,
+        json: vi.fn().mockRejectedValue(new Error('bad json')),
+      } as unknown as Response,
+    );
+    await expect(
+      generator.generate(topic, '2026-06-23T00:01:00.000Z'),
+    ).rejects.toThrow('LLM response had no message content');
+    malformedPayloadMock.mockRestore();
+
+    const invalidPayloads = [
+      { label: 'missing choices', payload: {} },
+      { label: 'empty choices', payload: { choices: [] } },
+      { label: 'missing message', payload: { choices: [{}] } },
+      { label: 'non-string content', payload: { choices: [{ message: { content: 1 } }] } },
+      { label: 'empty content', payload: { choices: [{ message: { content: '' } }] } },
+    ];
+    for (const { payload } of invalidPayloads) {
+      const invalidPayloadMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue(payload),
+      } as unknown as Response);
+      await expect(generator.generate(topic, '2026-06-23T00:01:00.000Z')).rejects.toThrow(
+        'LLM response had no message content',
+      );
+      invalidPayloadMock.mockRestore();
+    }
+  });
+
+  it('accepts valid OpenAI-compatible generator JSON payloads', async () => {
+    const generator = new OpenAICompatibleBunnyGenerator({
+      endpoint: 'https://example.test/v1/chat/completions',
+      apiKey: 'test-key',
+      model: 'gpt-test',
+    });
+    const topic = {
+      id: 'topic-1',
+      candidateId: 'cand-1',
+      title: 'Build a browser agent workflow for research',
+      url: 'https://example.test/workflow',
+      summary: 'Step-by-step automation workflow for AI research.',
+      score: 91,
+      reason: 'workflow tutorial',
+      createdAt: '2026-06-23T00:00:00.000Z',
+    };
+    const validPayloadMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: 'AI workflow guide generated for research.',
+            },
+          },
+        ],
+      }),
+    } as unknown as Response);
+
+    const draft = await generator.generate(topic, '2026-06-23T00:01:00.000Z');
+    expect(draft.englishText).toBe('AI workflow guide generated for research.');
+    validPayloadMock.mockRestore();
+  });
+});

@@ -97,6 +97,18 @@ describe('README runtime contract', () => {
     expect(docs).toContain('旧版 `sandbox`');
     expect(docs).not.toContain('"sandbox"');
   });
+
+  it('documents Bunny as an optional agent runtime layer', async () => {
+    const docs = await readDocs();
+
+    expect(docs).toContain('Bunny AI tools media agent');
+    expect(docs).toContain('Bunny AI 工具自媒体 agent');
+    expect(docs).toContain('explicit business skills');
+    expect(docs).toContain('显式业务 skill');
+    expect(docs).toContain('Feishu/Lark menu');
+    expect(docs).not.toContain('/bunny status');
+    expect(docs).not.toContain('lark-channel-bridge bunny serve');
+  });
 });
 
 async function readDocs(): Promise<string> {

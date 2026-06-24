@@ -4,9 +4,11 @@ Date: 2026-06-23
 
 ## Summary
 
-Bunny is an AI tools media agent for X/Twitter. It runs as an independent
-service and uses `lark-channel-bridge` only as a thin Feishu/Lark control and
-notification surface.
+Bunny is an AI tools media agent for X/Twitter. It runs as a first-class agent
+with its own system prompt, explicit business skills, hooks, and Feishu/Lark
+menu/card surfaces. `lark-channel-bridge` only provides message transport,
+card delivery, callback routing, local execution, and repo-managed runtime
+state.
 
 The first version focuses on fully automated content operations: discover AI
 tool and workflow topics, generate bilingual research notes and English-first
@@ -16,8 +18,11 @@ comments, bulk follows, or other high-risk interaction loops.
 
 ## Decisions
 
-- Product shape: independent `bunny-twitter-agent` service plus a thin bridge
-  integration.
+- Product shape: Bunny is an Andy-like first-class agent, not a bridge slash
+  command and not a user-facing CLI command group.
+- Control model: low-risk analysis can be conversational; business actions are
+  triggered by explicit Bunny skills, menu items, cards, or signed card
+  callbacks.
 - Topic positioning: AI tools, with AI workflow tutorials as the primary
   content line and tool reviews plus monetization ideas as secondary lines.
 - Language strategy: bilingual research and internal notes, English-first X
@@ -26,14 +31,17 @@ comments, bulk follows, or other high-risk interaction loops.
   no automated spam-like engagement in V1.
 - Publishing API: X API v2 `POST /2/tweets`, using a user-authorized developer
   app and budget-aware rate handling.
-- First rollout mode: dry-run for three days, then one post per day for the
-  first seven live days before increasing to the normal V1 cadence.
+- First rollout mode: dry-run for three days, then explicit approval before one
+  post per day for the first seven live days. Normal V1 cadence requires a
+  manual menu/card approval.
 
 ## Non-Goals
 
 - No Web3 or trading narrative coverage in V1.
 - No generic social media platform abstraction in V1.
 - No direct integration of Twitter-specific business logic into bridge core.
+- No `/bunny` slash command in Feishu/Lark.
+- No user-facing `lark-channel-bridge bunny ...` CLI command group.
 - No automated private messages, mass replies, mass follows, or engagement
   farming.
 - No promise of follower, revenue, or virality outcomes.
@@ -44,13 +52,18 @@ comments, bulk follows, or other high-risk interaction loops.
 ```text
 Feishu/Lark user
   |
-  | /bunny status, /bunny today, /bunny pause, /bunny resume
+  | Bunny chat, menu actions, cards, signed callbacks
   v
-lark-channel-bridge thin integration
+lark-channel-bridge agent transport
   |
-  | local HTTP/CLI call
+  | route message or callback into Bunny runtime
   v
-Bunny Engine
+Bunny Agent Runtime
+  |-- System Prompt
+  |-- Business Skill Commands
+  |-- Hook Dispatcher
+  |-- Feishu/Lark Cards
+  |-- Bunny Engine
   |-- Source Ingestion
   |-- Topic Scoring
   |-- Content Generation
@@ -64,9 +77,9 @@ Bunny Database
 ```
 
 The bridge integration is intentionally thin. It does not own source
-collection, topic scoring, content generation, publishing, or analytics. It only
-passes operator commands to Bunny and sends Bunny notifications back to
-Feishu/Lark.
+collection, topic scoring, content generation, publishing, or analytics. It
+routes natural-language messages, menu actions, and signed card callbacks to
+Bunny, then sends Bunny responses and cards back to Feishu/Lark.
 
 ## Components
 
@@ -75,6 +88,70 @@ Feishu/Lark.
 The engine owns the daily operating loop. It can run as a long-lived service or
 as scheduled jobs launched by cron/systemd timers. Its modules are designed so
 each can be tested without calling real X or Lark APIs.
+
+### Bunny Agent Runtime
+
+The agent runtime owns Bunny's identity and operator experience:
+
+- a Bunny-specific system prompt
+- a registry of explicit business skills
+- a dispatcher for menu/card callback payloads
+- hook execution for scheduled and state-transition events
+- repo-managed prompt, skill, and hook artifacts
+
+The runtime is the only layer that interprets operator intent. It may answer
+natural-language questions, but state-changing business operations must enter
+through explicit skill commands or signed card callbacks.
+
+### System Prompt
+
+Bunny's system prompt frames it as an AI tools media operator. It should keep
+the agent focused on:
+
+- AI tools and AI workflow tutorials
+- English-first X/Twitter publishing
+- Chinese research notes for the owner
+- cautious claims, source attribution, and conservative cadence
+- explicit approval before live publishing
+
+The prompt must forbid engagement farming, unsupported income promises, and
+publishing actions triggered only by vague natural language.
+
+### Business Skills
+
+Key business skills are explicit command-like operations owned by Bunny, not
+bridge slash commands:
+
+- `research_topics`: collect and score AI tool/workflow candidates.
+- `generate_drafts`: produce Chinese notes and English posts from approved
+  topics.
+- `quality_check`: run duplicate, claim, source, length, and cadence checks.
+- `review_queue`: show drafts awaiting approval.
+- `schedule_posts`: schedule approved drafts.
+- `pause_publishing`: pause future publishing.
+- `resume_publishing`: resume future publishing.
+- `daily_report`: summarize published posts, drafts, skipped candidates,
+  metrics, and warnings.
+
+These skills can be triggered by Feishu/Lark menu items, Bunny cards, or
+unambiguous typed skill names inside Bunny's chat. The implementation must not
+register `/bunny` commands in the bridge command handler.
+
+### Hooks
+
+Bunny hooks run around predictable business events:
+
+- `scheduled_ingestion`: collect fresh candidates.
+- `after_ingestion`: score and store new candidates.
+- `before_draft_generation`: choose topics under the daily budget.
+- `after_draft_generation`: run quality checks and update the review queue.
+- `before_publish`: enforce pause state, live-mode gates, cadence, and
+  approval status.
+- `after_publish`: record X IDs/URLs and metrics collection intent.
+- `daily_report`: send the daily Feishu/Lark summary.
+
+Hooks must be repo-managed artifacts and must be testable without live X or
+Lark API calls.
 
 ### Source Ingestion
 
@@ -153,21 +230,20 @@ The X API adapter is the only component that calls X. It handles:
 
 It must never log raw access tokens or secrets.
 
-### Bridge Integration
+### Feishu/Lark Agent Surface
 
-The bridge integration adds a small command surface:
+Bunny exposes an agent surface instead of slash commands or CLI commands:
 
-- `/bunny status`: show service state, pause state, queue size, last publish, and
-  budget/rate status.
-- `/bunny today`: show today's planned posts and the latest generated Chinese
-  notes.
-- `/bunny pause`: stop future publishing while still allowing ingestion and
-  draft generation.
-- `/bunny resume`: resume publishing.
+- a Bunny home card with status, queue, budget, and next actions
+- a floating/menu entry that opens the Bunny home card when the platform
+  supports it
+- signed callback buttons for explicit business skills
+- natural-language replies for low-risk advisory questions
+- daily report cards
 
-Bridge commands call Bunny through a local interface, such as a localhost HTTP
-API or a CLI. The first implementation should choose the smallest interface
-that matches the existing bridge command patterns.
+State-changing actions such as scheduling, pausing, resuming, and live
+publishing must be triggered through explicit skill callbacks or typed skill
+names. Live publishing requires a confirmation step.
 
 ### Daily Reporter
 
@@ -193,7 +269,7 @@ Core tables:
 - `scheduled_posts`: queue entries with publish time, status, and `post_key`.
 - `published_posts`: X post IDs, URLs, timestamps, and linked draft IDs.
 - `metrics`: periodic performance snapshots.
-- `events`: audit log for command calls, scheduler decisions, publish attempts,
+- `events`: audit log for skill calls, hook runs, scheduler decisions, publish attempts,
   failures, pauses, and resumes.
 - `settings`: cadence, budgets, pause state, and rollout mode.
 
@@ -223,8 +299,8 @@ so jobs can resume safely after process restarts.
 - Content quality failure: keep the draft with a failure reason; do not publish.
 - Scheduler crash: resume from persisted statuses; do not infer publication from
   memory.
-- Bridge command failure: report Bunny service reachability and leave existing
-  publishing state unchanged.
+- Agent callback failure: report the failed Bunny skill or hook and leave
+  existing publishing state unchanged.
 - Missing X credentials: run ingestion, generation, and reports in dry-run mode
   only.
 
@@ -236,6 +312,8 @@ so jobs can resume safely after process restarts.
 - Claims about money, growth, model capability, or product performance require a
   source or must be rewritten as opinion.
 - The operator can pause publishing from Feishu/Lark at any time.
+- State-changing actions use explicit skill commands, menu items, or signed card
+  callbacks; vague natural language cannot publish, schedule, pause, or resume.
 - Default cadence is intentionally conservative.
 
 ## Testing
@@ -255,7 +333,7 @@ Integration tests cover:
 - publish success with a mocked X API
 - publish retry without duplicate posting
 - rate/credit pause behavior
-- bridge command calls to Bunny
+- Bunny agent callbacks, menu actions, and explicit skill dispatch
 - daily report generation
 
 End-to-end validation:
@@ -270,7 +348,8 @@ End-to-end validation:
 1. Create the independent Bunny service skeleton.
 2. Add SQLite persistence and status transitions.
 3. Implement dry-run ingestion, scoring, generation, and reporting.
-4. Add bridge commands for status, today, pause, and resume.
+4. Add Bunny agent surface cards, menu/callback handling, and explicit skill
+   dispatch.
 5. Add X API adapter behind a disabled-by-default live publishing flag.
 6. Run three-day dry-run.
 7. Enable first-week low-frequency live posting.
@@ -282,7 +361,8 @@ End-to-end validation:
 - User authorization token for the target X account.
 - An LLM provider for content generation.
 - Stable source feeds or APIs for AI tool discovery.
-- Existing lark-channel-bridge runtime for Feishu/Lark commands and reports.
+- Existing lark-channel-bridge runtime for Feishu/Lark messages, cards,
+  callback routing, and reports.
 
 ## References
 
@@ -301,7 +381,9 @@ These are configuration values, not unresolved design questions:
 - LLM provider and model.
 - Initial source feed list.
 - Daily credit/budget threshold.
-- Local interface between bridge and Bunny: localhost HTTP or CLI.
+- Exact Feishu/Lark menu mechanism available for Bunny home entry. If a
+  persistent floating menu is not available in the current app setup, use a
+  pinned/home card plus signed callback buttons.
 
 The implementation plan should pick conservative defaults and keep secrets out
 of committed files.
