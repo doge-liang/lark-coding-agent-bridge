@@ -6,7 +6,7 @@ import { createDefaultProfileConfig } from '../../../src/config/profile-schema.j
 import { log } from '../../../src/core/logger.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
-import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
+import { FakeAgentAdapter, type FakeAgentEvents } from '../../helpers/fake-agent.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
 
 const sdkMock = vi.hoisted(() => ({
@@ -156,11 +156,49 @@ describe('markdown stream startup failures', () => {
       ),
     );
   }, 10_000);
+
+  it('sends a terminal fallback card when card stream transport stalls after render completes', async () => {
+    const streamNeverFinishes = deferred<void>();
+    let producerCompleted = false;
+    const h = await createHarness({
+      messageReply: 'card',
+      agentEvents: [
+        [
+          { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'pwd' } },
+          { type: 'tool_result', id: 'tool-1', output: '/repo', isError: false },
+          { type: 'done', terminationReason: 'normal' },
+        ],
+      ],
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          card?: {
+            producer: (ctrl: { update(next: object | ((current: object) => object)): Promise<void> }) => Promise<void>;
+          };
+        }).card?.producer;
+        if (!producer) throw new Error('expected card stream input');
+        await producer({ update: vi.fn(async () => {}) });
+        producerCompleted = true;
+        await streamNeverFinishes.promise;
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_first', 'first'));
+
+    await waitFor(() => producerCompleted);
+    await waitFor(() => h.channel.sent.length > 0, 4500);
+    const card = JSON.stringify(lastCard(h.channel));
+    expect(card).toContain('"streaming_mode":false');
+    expect(card).toContain('已完成');
+    expect(card).not.toContain('正在调用工具');
+  }, 10_000);
 });
 
 async function createHarness(options: {
   reactionCreate?: () => Promise<{ data: { reaction_id: string } }>;
   stream?: StreamFn;
+  messageReply?: 'markdown' | 'card' | 'text';
+  agentEvents?: FakeAgentEvents;
 } = {}): Promise<{
   tmp: TmpProfile;
   channel: FakeLarkChannel;
@@ -190,6 +228,12 @@ async function createHarness(options: {
   });
   const profileConfig = {
     ...baseProfileConfig,
+    preferences: {
+      ...baseProfileConfig.preferences,
+      ...(options.messageReply
+        ? { messageReply: options.messageReply, messageReplyMigrated: true }
+        : {}),
+    },
     workspaces: {
       ...baseProfileConfig.workspaces,
       default: workspace,
@@ -200,7 +244,7 @@ async function createHarness(options: {
   const agent = new FakeAgentAdapter({
     id: 'codex',
     displayName: 'Codex',
-    events: [
+    events: options.agentEvents ?? [
       [
         {
           type: 'error',
@@ -359,6 +403,12 @@ function lastMarkdown(channel: FakeLarkChannel): string {
   const content = channel.sent.at(-1)?.content as { markdown?: string } | undefined;
   expect(content?.markdown).toBeTypeOf('string');
   return content?.markdown ?? '';
+}
+
+function lastCard(channel: FakeLarkChannel): object {
+  const content = channel.sent.at(-1)?.content as { card?: object } | undefined;
+  expect(content?.card).toBeTypeOf('object');
+  return content?.card ?? {};
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
