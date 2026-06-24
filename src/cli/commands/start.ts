@@ -452,7 +452,20 @@ async function sendPendingUpgradeNotification(
   const notification = await readPendingUpgradeNotification(appPaths);
   if (!notification) return;
   const sent = await sendUpgradeNotification(channel, notification);
-  if (sent) await clearPendingUpgradeNotification(appPaths, notification.id);
+  if (sent) {
+    await clearPendingUpgradeNotification(appPaths, notification.id);
+    log.info('upgrade', 'pending-notification-sent', {
+      id: notification.id,
+      status: notification.status,
+      commit: notification.commit,
+    });
+    return;
+  }
+  log.warn('upgrade', 'pending-notification-retained', {
+    id: notification.id,
+    status: notification.status,
+    commit: notification.commit,
+  });
 }
 
 async function sendUpgradeNotification(

@@ -29,6 +29,7 @@ const FALLBACK_NODE = ${JSON.stringify(inputs.fallbackNodePath)};
 const FALLBACK_BRIDGE_ENTRY = ${JSON.stringify(inputs.fallbackBridgeEntryPath)};
 const rootDir = join(CHANNEL_HOME, 'profiles', PROFILE, 'upgrades');
 const stateFile = join(rootDir, 'state.json');
+const MAX_CAPTURED_STDERR_CHARS = 4000;
 
 function readState() {
   try {
@@ -100,13 +101,70 @@ function rollbackState(state, message) {
   return { state: next, rolledBack: true };
 }
 
+function appendCapturedStderr(current, chunk) {
+  const next = current + String(chunk);
+  return next.length > MAX_CAPTURED_STDERR_CHARS
+    ? next.slice(next.length - MAX_CAPTURED_STDERR_CHARS)
+    : next;
+}
+
+function sanitizeDiagnostic(text) {
+  return String(text)
+    .replace(/((?:secret|token|authorization)(?:["']?\\s*[:=]\\s*))[^\\s,}]+/gi, '$1[REDACTED]')
+    .replace(/\\s+/g, ' ')
+    .trim()
+    .slice(-1200);
+}
+
+function childExitMessage(result, stderrTail) {
+  const parts = ['child-exited-before-healthy'];
+  if (result.error) parts.push('spawnError=' + sanitizeDiagnostic(result.error));
+  if (result.exitCode !== undefined && result.exitCode !== null) {
+    parts.push('exitCode=' + result.exitCode);
+  }
+  if (result.signal) parts.push('signal=' + result.signal);
+  if (stderrTail) parts.push('stderr=' + sanitizeDiagnostic(stderrTail));
+  return parts.join('; ');
+}
+
+function waitForChildExit(child) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    child.once('error', (err) => {
+      finish({
+        exitCode: 1,
+        signal: null,
+        error: err && err.message ? err.message : String(err),
+      });
+    });
+    child.once('exit', (exitCode, signal) => {
+      finish({
+        exitCode: exitCode === null ? null : exitCode,
+        signal: signal || null,
+      });
+    });
+  });
+}
+
 async function runOnce() {
   const state = readState();
   const command = childCommand(state);
   const child = spawn(command.node, command.args, {
-    stdio: 'inherit',
+    stdio: ['inherit', 'inherit', 'pipe'],
     env: { ...process.env, LARK_CHANNEL_HOME: CHANNEL_HOME },
   });
+  let stderrTail = '';
+  if (child.stderr) {
+    child.stderr.on('data', (chunk) => {
+      process.stderr.write(chunk);
+      stderrTail = appendCapturedStderr(stderrTail, chunk);
+    });
+  }
   const pendingActivation = state.pendingActivation;
   let activationTimer;
   let rolledBackForTimeout = false;
@@ -129,18 +187,21 @@ async function runOnce() {
   const forward = (signal) => child.kill(signal);
   process.once('SIGINT', forward);
   process.once('SIGTERM', forward);
-  const code = await new Promise((resolve) => child.on('exit', (exitCode) => resolve(exitCode ?? 1)));
+  const childResult = await waitForChildExit(child);
   if (activationTimer) clearTimeout(activationTimer);
   process.removeListener('SIGINT', forward);
   process.removeListener('SIGTERM', forward);
   if (rolledBackForTimeout) return 'retry';
   const latest = readState();
   if (pendingActivation && latest.pendingActivation) {
-    const rollbackResult = rollbackState(latest, 'child-exited-before-healthy');
+    const rollbackResult = rollbackState(latest, childExitMessage(childResult, stderrTail));
     if (rollbackResult.rolledBack) return 'retry';
     process.exit(1);
   }
-  process.exit(Number(code));
+  const exitCode = childResult.exitCode === null || childResult.exitCode === undefined
+    ? childResult.signal ? 1 : 0
+    : childResult.exitCode;
+  process.exit(Number(exitCode));
 }
 
 for (;;) {

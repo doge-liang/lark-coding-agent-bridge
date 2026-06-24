@@ -133,6 +133,17 @@ describe('start runtime agent factory', () => {
     expect(pendingIndex).toBeGreaterThan(activationIndex);
   });
 
+  it('logs pending upgrade failure notification outcomes', async () => {
+    const source = await readFile(join(process.cwd(), 'src/cli/commands/start.ts'), 'utf8');
+    const pendingStart = source.indexOf('async function sendPendingUpgradeNotification');
+    const sentLog = source.indexOf("log.info('upgrade', 'pending-notification-sent'", pendingStart);
+    const retainedLog = source.indexOf("log.warn('upgrade', 'pending-notification-retained'", pendingStart);
+
+    expect(pendingStart).toBeGreaterThanOrEqual(0);
+    expect(sentLog).toBeGreaterThan(pendingStart);
+    expect(retainedLog).toBeGreaterThan(pendingStart);
+  });
+
   it('rejects reconnect when a profile changes agent kind in place', () => {
     expect(() => assertReconnectAgentKindUnchanged('claude', 'codex')).toThrow(/agent kind/i);
     expect(() => assertReconnectAgentKindUnchanged('codex', 'codex')).not.toThrow();

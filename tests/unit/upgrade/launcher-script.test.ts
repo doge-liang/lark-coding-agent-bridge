@@ -58,8 +58,24 @@ describe('upgrade launcher script', () => {
       fallbackBridgeEntryPath: '/repo/bin/lark-channel-bridge.mjs',
     });
 
-    expect(script).toContain("const rollbackResult = rollbackState(latest, 'child-exited-before-healthy');");
+    expect(script).toContain('const rollbackResult = rollbackState(latest, childExitMessage(childResult, stderrTail));');
     expect(script).toContain("if (rollbackResult.rolledBack) return 'retry';");
     expect(script).toContain('process.exit(1);');
+  });
+
+  it('includes child exit details and stderr tail in activation rollback reason', () => {
+    const script = buildUpgradeLauncherScript({
+      profile: 'codex-dev',
+      channelHome: '/tmp/lark-home',
+      fallbackNodePath: '/usr/bin/node',
+      fallbackBridgeEntryPath: '/repo/bin/lark-channel-bridge.mjs',
+    });
+
+    expect(script).toContain('function childExitMessage(result, stderrTail)');
+    expect(script).toContain("parts.push('exitCode=' + result.exitCode)");
+    expect(script).toContain("parts.push('signal=' + result.signal)");
+    expect(script).toContain("parts.push('stderr=' + sanitizeDiagnostic(stderrTail))");
+    expect(script).toContain('const childResult = await waitForChildExit(child);');
+    expect(script).toContain('const rollbackResult = rollbackState(latest, childExitMessage(childResult, stderrTail));');
   });
 });
