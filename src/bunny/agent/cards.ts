@@ -43,6 +43,7 @@ export function bunnyActionPayload(
 ): Record<string, unknown> {
   const skill = ACTION_SKILLS[action];
   return {
+    cmd: `bunny.${action}`,
     domain: 'bunny',
     bunny_action: action,
     ...(skill ? { bunny_skill: skill } : {}),

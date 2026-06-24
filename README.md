@@ -178,6 +178,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/resume` | Resume compatible history for the same agent, working directory, and permission mode |
 | `/status` | Show profile, agent, working directory, session, lark-cli identity, and run state |
 | `/usage` | Show current Codex session token usage and context window |
+| `/bunny` | Open Bunny, a Codex-backed AI tools media operator |
 | `/menu` | Show suggested Feishu / Lark bot floating-menu configuration |
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
 | `/invite user @name` | Allow a user to use the bot in DMs |
@@ -203,6 +204,7 @@ Bot custom menus are configured and published in the Feishu / Lark Developer Con
 | Menu text | Equivalent command |
 |---|---|
 | `用量` | `/usage` |
+| `Bunny` | `/bunny` |
 | `状态` | `/status` |
 | `新对话` | `/new` |
 | `新会话` | `/new` |
@@ -218,18 +220,19 @@ Send `/menu` in Feishu / Lark for a configuration card. Floating menus are DM-on
 
 ### Bunny AI tools media agent
 
-Bunny is an optional agent runtime layer for AI tools X/Twitter content
-operations. It is controlled by Bunny environment variables and repo-managed
-runtime wiring, not by the superseded Bunny slash-command, local control server,
-or user-facing CLI command group.
+Bunny is an optional Codex-backed agent surface for AI tools X/Twitter content
+operations. Open it with `/bunny` or the floating-menu label `Bunny` from a
+Codex profile. This entry only routes Lark actions into a dedicated Bunny Codex
+session; it is not the superseded local Bunny control server or user-facing CLI
+command group.
 
 Bunny uses:
 
-- a Bunny-specific system prompt
+- a Bunny-specific Codex prompt profile
 - explicit business skills for research, draft generation, review, scheduling,
   pause/resume, and daily reports
 - hooks for scheduled ingestion, draft checks, publishing gates, and reporting
-- Feishu/Lark menu or card actions for state-changing operations
+- Feishu/Lark menu or card actions that trigger explicit Bunny skill events
 
 Natural-language chat is reserved for low-risk advisory work. Publishing,
 scheduling, pausing, and resuming require explicit business skills or signed

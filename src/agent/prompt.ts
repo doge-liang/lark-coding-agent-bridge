@@ -56,9 +56,19 @@ export interface BridgePromptAttachment {
   rejectionReason?: string;
 }
 
+export interface BridgePromptAgentProfile {
+  id: string;
+  displayName: string;
+  baseAgent?: string;
+  systemPrompt: string;
+  manifest?: unknown;
+  callbackContract?: unknown;
+}
+
 export interface BuildAgentPromptInput {
   context: BridgePromptContext;
   instructions?: string[];
+  agentProfile?: BridgePromptAgentProfile;
   userInput: string;
   quotedMessages?: BridgePromptQuotedMessage[];
   interactiveCards?: BridgePromptInteractiveCard[];
@@ -72,6 +82,7 @@ export function buildAgentPrompt(input: BuildAgentPromptInput): string {
     input.instructions && input.instructions.length > 0
       ? promptSection('bridge_instructions', input.instructions)
       : undefined,
+    input.agentProfile ? promptSection('agent_profile', input.agentProfile) : undefined,
     input.quotedMessages && input.quotedMessages.length > 0
       ? promptSection('quoted_messages', input.quotedMessages)
       : undefined,

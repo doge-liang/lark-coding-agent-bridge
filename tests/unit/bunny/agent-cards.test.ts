@@ -20,17 +20,20 @@ describe('Bunny agent cards', () => {
     ]);
 
     expect(bunnyActionPayload('research')).toEqual({
+      cmd: 'bunny.research',
       domain: 'bunny',
       bunny_action: 'research',
       bunny_skill: 'research_topics',
     });
     expect(bunnyActionPayload('report', { reportDate: '2026-06-24' })).toEqual({
+      cmd: 'bunny.report',
       domain: 'bunny',
       bunny_action: 'report',
       bunny_skill: 'daily_report',
       reportDate: '2026-06-24',
     });
     expect(bunnyActionPayload('status')).toEqual({
+      cmd: 'bunny.status',
       domain: 'bunny',
       bunny_action: 'status',
     });

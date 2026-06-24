@@ -112,6 +112,7 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
       controls: deps.controls,
       formValue,
       fromCardAction: true,
+      pending: deps.pending,
     };
 
     const [name, ...rest] = cmd.split('.');

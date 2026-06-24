@@ -2,6 +2,12 @@
 
 Date: 2026-06-23
 
+2026-06-24 update: the Lark entry-point details are superseded by
+`2026-06-24-bunny-codex-lark-bridge-design.md`. `/bunny` now exists only as a
+thin Lark command/menu entry that opens Bunny and queues explicit skill events
+into a Codex-backed Bunny scope; the old local control server and user-facing
+CLI command group remain out of scope.
+
 ## Summary
 
 Bunny is an AI tools media agent for X/Twitter. It runs as a first-class agent

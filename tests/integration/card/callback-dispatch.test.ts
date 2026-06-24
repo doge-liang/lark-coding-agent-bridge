@@ -65,6 +65,21 @@ describe('signed card callback dispatch', () => {
     expect(queued[0]?.chatType).toBe('group');
   });
 
+  it('routes Bunny command buttons into the Bunny Codex scope', async () => {
+    const h = await createHarness({ agentKind: 'codex' });
+
+    await h.dispatch({
+      cmd: 'bunny.research',
+    });
+
+    expect(h.pending.cancel('oc_group')).toHaveLength(0);
+    const queued = h.pending.cancel('oc_group:bunny');
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toBe(
+      '[bunny-skill] {"domain":"bunny","action":"research","skill":"research_topics","source":"lark-card","confirmed":false}',
+    );
+  });
+
   it('drops legacy Claude callback markers before command dispatch', async () => {
     const h = await createHarness();
     const activeRun = h.agent.run({ runId: 'run-active', prompt: 'running' }) as FakeAgentRun;
@@ -133,7 +148,11 @@ type Harness = {
 };
 
 async function createHarness(
-  opts: { callbackAuth?: boolean; chatMode?: 'p2p' | 'group' | 'topic' } = {},
+  opts: {
+    callbackAuth?: boolean;
+    chatMode?: 'p2p' | 'group' | 'topic';
+    agentKind?: 'claude' | 'codex';
+  } = {},
 ): Promise<Harness> {
   const tmp = await createTmpProfile('callback-dispatch-test-');
   const channel = createFakeChannel();
@@ -146,9 +165,10 @@ async function createHarness(
   const controls = {
     profile: 'claude',
     profileConfig: createDefaultProfileConfig({
-      agentKind: 'claude',
+      agentKind: opts.agentKind ?? 'claude',
       accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
       access: { allowedChats: ['oc_group'] },
+      ...(opts.agentKind === 'codex' ? { codex: { binaryPath: 'codex' } } : {}),
     }),
     botOwnerId: 'ou_owner',
     ownerRefreshState: 'ok',
@@ -157,9 +177,10 @@ async function createHarness(
     async exit() {},
     configPath: `${tmp.profile}/config.json`,
     cfg: createDefaultProfileConfig({
-      agentKind: 'claude',
+      agentKind: opts.agentKind ?? 'claude',
       accounts: { app: { id: 'app-id', secret: 'secret', tenant: 'feishu' } },
       access: { allowedChats: ['oc_group'] },
+      ...(opts.agentKind === 'codex' ? { codex: { binaryPath: 'codex' } } : {}),
     }),
     processId: 'proc-1',
   } satisfies Controls;

@@ -43,6 +43,7 @@ import {
   toPolicyAttachment,
   toPromptAttachment,
 } from '../media/attachment';
+import { bunnyPromptProfile, isBunnyScope } from '../bunny/agent/bridge';
 import { canUseDm, canUseGroup } from '../policy/access';
 import type { ScopeContext } from '../policy/run-policy';
 import { createOwnerRefreshController } from '../policy/owner';
@@ -578,6 +579,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     }),
     runExecutor: executor,
     processPool: pool,
+    pending,
     controls,
   });
   if (handled) {
@@ -670,7 +672,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     }
   }
 
-  const prompt = buildPrompt(batch, attachments, quotes, channel.botIdentity);
+  const prompt = buildPrompt(batch, attachments, quotes, channel.botIdentity, scope);
   log.info('prompt', 'built', { promptChars: prompt.length, quotes: quotes.length });
 
   // For topic groups: thread the reply so it lands in the same topic as the
@@ -1158,6 +1160,7 @@ function buildPrompt(
   attachments: LocalAttachment[],
   quotes: QuotedContext[] = [],
   botIdentity?: { openId: string; name?: string },
+  scope?: string,
 ): string {
   const first = batch[0];
   if (!first) return '';
@@ -1198,6 +1201,7 @@ function buildPrompt(
       source: 'im',
     },
     instructions: BRIDGE_AGENT_INSTRUCTIONS,
+    ...(scope && isBunnyScope(scope) ? { agentProfile: bunnyPromptProfile() } : {}),
     userInput: userPart,
     quotedMessages: quotes.map(toPromptQuote),
     interactiveCards: batch.map(toPromptInteractiveCard).filter(isDefined),

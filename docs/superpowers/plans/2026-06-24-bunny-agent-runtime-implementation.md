@@ -2,6 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> 2026-06-24 update: the runtime/package work in this plan is complete, but the
+> Lark entry-point details are superseded by
+> `docs/superpowers/specs/2026-06-24-bunny-codex-lark-bridge-design.md`.
+> `/bunny` now exists as a thin Lark command/menu entry into a Codex-backed
+> Bunny scope; the removed HTTP server and user-facing host CLI remain out of
+> scope.
+
 **Goal:** Convert Bunny from the superseded CLI/slash-command design into a repo-managed Andy-like agent with explicit business skills, hooks, and Feishu/Lark menu/card actions.
 
 **Architecture:** Keep the useful Bunny domain modules already built under `src/bunny/` (types, config, store, scoring, generator, quality, scheduler, sources, X API, and engine). Remove user-facing CLI/server control surfaces. Add a focused `src/bunny/agent/` layer that owns Bunny's manifest, system prompt, skill registry, hook registry, skill dispatcher, and card payload builders; bridge integration should use card/menu/callback payloads, not `/bunny` commands.

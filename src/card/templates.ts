@@ -274,6 +274,7 @@ export function helpCard(agentName = 'Agent'): object {
         '- `/config` — 调整偏好、访问控制和 lark-cli 身份策略',
         '- `/status` — 当前状态',
         '- `/usage` — 查看当前 Codex session 的 token 用量和上下文窗口',
+        '- `/bunny` — 打开 Bunny（Codex-backed AI tools media operator）',
         '- `/menu` — 查看飞书机器人悬浮菜单配置建议',
         '- `/stop` — 结束当前正在跑的任务（也可点卡片底部 ⏹ 终止 按钮）',
         '- `/stop comment:<scopeHash>` — 管理员停止云文档评论任务',
@@ -293,6 +294,7 @@ export function helpCard(agentName = 'Agent'): object {
     actions([
       { text: '📊 状态', value: { cmd: 'status' }, style: 'primary' },
       { text: '📈 用量', value: { cmd: 'usage' } },
+      { text: 'Bunny', value: { cmd: 'bunny' } },
       { text: '☰ 菜单', value: { cmd: 'menu' } },
       { text: '🔁 恢复会话', value: { cmd: 'resume' } },
       { text: '📂 工作目录', value: { cmd: 'ws.list' } },
@@ -321,6 +323,7 @@ export function menuCard(agentName = 'Agent'): object {
       [
         '**一级菜单建议**',
         '- `用量` → `/usage`',
+        '- `Bunny` → `Bunny`',
         '- `状态` → `/status`',
         '- `新对话` → `/new`',
         '- `新会话` 也会映射到 `/new`',
@@ -340,12 +343,13 @@ export function menuCard(agentName = 'Agent'): object {
     divMd(
       [
         '**说明**',
-        '这些中文菜单文案已内置为精确命令别名；用户点击后，飞书会把菜单文案作为消息发送给 bot。',
+        '这些菜单文案已内置为精确命令别名；用户点击后，飞书会把菜单文案作为消息发送给 bot。',
         '悬浮菜单仅支持单聊，客户端需要飞书 7.22 及以上；应用版本发布后通常需等待约 5 分钟生效。',
       ].join('\n'),
     ),
     actions([
       { text: '📈 用量', value: { cmd: 'usage' }, style: 'primary' },
+      { text: 'Bunny', value: { cmd: 'bunny' } },
       { text: '📊 状态', value: { cmd: 'status' } },
       { text: '💡 帮助', value: { cmd: 'help' } },
     ]),

@@ -99,6 +99,32 @@ describe('agent prompt builder', () => {
     expect(prompt).not.toContain('<comment_context>');
   });
 
+  it('serializes an optional agent profile section for scoped agent personas', () => {
+    const prompt = buildAgentPrompt({
+      context: {
+        chatId: 'oc_dm',
+        chatType: 'p2p',
+        senderId: 'ou_owner',
+        source: 'im',
+      },
+      agentProfile: {
+        id: 'bunny',
+        displayName: 'Bunny',
+        baseAgent: 'codex',
+        systemPrompt: 'You are Bunny.',
+        callbackContract: { eventPrefix: '[bunny-skill]' },
+      },
+      userInput: '[bunny-skill] {"action":"research"}',
+    });
+
+    expect(readSection(prompt, 'agent_profile')).toMatchObject({
+      id: 'bunny',
+      displayName: 'Bunny',
+      baseAgent: 'codex',
+      systemPrompt: 'You are Bunny.',
+    });
+  });
+
   it('keeps bridge agents inside the current lark-channel profile by default', () => {
     const source = readFileSync(join(process.cwd(), 'src/bot/channel.ts'), 'utf8');
 
