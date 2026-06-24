@@ -6,9 +6,10 @@ Create Bunny as a Codex-backed Lark operator surface. Bunny is not a separate lo
 
 ## Entry Points
 
-- `/bunny` opens the Bunny home card.
-- The floating menu label `Bunny` maps to `/bunny`.
-- Bunny home card buttons use built-in command payloads such as `cmd: "bunny.research"`.
+- The floating menu label `Bunny` opens the Bunny home card by exact text match.
+- Floating menu labels such as `Bunny 选题`, `Bunny 草稿`, `Bunny 审稿`, `Bunny 排期`, and `Bunny 日报` trigger explicit Bunny skill events by exact text match.
+- Bunny home card buttons use dedicated payloads such as `{ "domain": "bunny", "bunny_action": "research" }`.
+- The bridge does not register a `/bunny` slash command.
 - Static Bunny cards do not forge `__bridge_cb` or `bridge_token`; signed agent callbacks remain reserved for cards produced during a live agent run.
 
 ## Session Model
@@ -42,6 +43,7 @@ State-changing actions remain explicit skill events. Actions that require confir
 ## Non-goals
 
 - No `/bunny` local CLI group.
+- No `/bunny` bridge slash command.
 - No Bunny HTTP server.
 - No unsigned agent callback token generation.
 - No automatic scheduler or publishing worker in this bridge entry-point change.

@@ -178,7 +178,6 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/resume` | Resume compatible history for the same agent, working directory, and permission mode |
 | `/status` | Show profile, agent, working directory, session, lark-cli identity, and run state |
 | `/usage` | Show current Codex session token usage and context window |
-| `/bunny` | Open Bunny, a Codex-backed AI tools media operator |
 | `/menu` | Show suggested Feishu / Lark bot floating-menu configuration |
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
 | `/invite user @name` | Allow a user to use the bot in DMs |
@@ -201,10 +200,15 @@ DMs do not require an @ mention. Groups and topic groups require `@bot` by defau
 
 Bot custom menus are configured and published in the Feishu / Lark Developer Console. For DMs, choose the **floating menu** display style and set each item action to **send text message**. The bridge includes these exact text aliases, so menu buttons can use readable labels:
 
-| Menu text | Equivalent command |
+| Menu text | Action |
 |---|---|
 | `用量` | `/usage` |
-| `Bunny` | `/bunny` |
+| `Bunny` | Open the Bunny home card |
+| `Bunny 选题` | Run Bunny topic research |
+| `Bunny 草稿` | Generate Bunny drafts |
+| `Bunny 审稿` | Open the Bunny review queue |
+| `Bunny 排期` | Schedule approved Bunny drafts |
+| `Bunny 日报` | Generate a Bunny daily report |
 | `状态` | `/status` |
 | `新对话` | `/new` |
 | `新会话` | `/new` |
@@ -221,8 +225,9 @@ Send `/menu` in Feishu / Lark for a configuration card. Floating menus are DM-on
 ### Bunny AI tools media agent
 
 Bunny is an optional Codex-backed agent surface for AI tools X/Twitter content
-operations. Open it with `/bunny` or the floating-menu label `Bunny` from a
-Codex profile. This entry only routes Lark actions into a dedicated Bunny Codex
+operations. Open it with the Feishu/Lark floating-menu label `Bunny` from a
+Codex profile, then use the Bunny home-card buttons or exact menu texts such as
+`Bunny 选题`. This entry only routes Lark actions into a dedicated Bunny Codex
 session; it is not the superseded local Bunny control server or user-facing CLI
 command group.
 

@@ -32,6 +32,14 @@ const ACTION_SKILLS: Partial<Record<BunnyAgentAction, BunnySkillName>> = {
   resume: 'resume_publishing',
 };
 
+export function isBunnyAgentAction(action: unknown): action is BunnyAgentAction {
+  return typeof action === 'string' && BUNNY_AGENT_ACTIONS.includes(action as BunnyAgentAction);
+}
+
+export function bunnySkillForAction(action: BunnyAgentAction): BunnySkillName | undefined {
+  return ACTION_SKILLS[action];
+}
+
 export interface BunnyHomeCardOptions {
   status: BunnyStatus;
   today: BunnyToday;
@@ -43,7 +51,6 @@ export function bunnyActionPayload(
 ): Record<string, unknown> {
   const skill = ACTION_SKILLS[action];
   return {
-    cmd: `bunny.${action}`,
     domain: 'bunny',
     bunny_action: action,
     ...(skill ? { bunny_skill: skill } : {}),

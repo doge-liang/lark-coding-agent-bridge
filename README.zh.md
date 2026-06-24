@@ -178,7 +178,6 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 | `/resume` | 恢复同 agent、工作目录、权限模式兼容的历史会话 |
 | `/status` | 查看 profile、agent、工作目录、会话、lark-cli 身份和运行状态 |
 | `/usage` | 查看当前 Codex session 的 token 用量和上下文窗口 |
-| `/bunny` | 打开 Bunny（基于 Codex 的 AI 工具自媒体 operator） |
 | `/menu` | 查看飞书机器人悬浮菜单配置建议 |
 | `/config` | 调整展示偏好、访问控制和 lark-cli 身份策略 |
 | `/invite user @某人` | 允许用户私聊使用 bot |
@@ -201,10 +200,15 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 
 飞书机器人自定义菜单需要在开放平台开发者后台配置并发布。单聊里推荐选择 **悬浮菜单**，菜单项响应动作选择 **发送文字消息**。bridge 内置了以下精确中文别名，因此菜单按钮可以展示中文文案：
 
-| 菜单文案 | 等价命令 |
+| 菜单文案 | 动作 |
 |---|---|
 | `用量` | `/usage` |
-| `Bunny` | `/bunny` |
+| `Bunny` | 打开 Bunny 首页卡片 |
+| `Bunny 选题` | 运行 Bunny 选题研究 |
+| `Bunny 草稿` | 生成 Bunny 草稿 |
+| `Bunny 审稿` | 打开 Bunny 审核队列 |
+| `Bunny 排期` | 排期已批准的 Bunny 草稿 |
+| `Bunny 日报` | 生成 Bunny 日报 |
 | `状态` | `/status` |
 | `新对话` | `/new` |
 | `新会话` | `/new` |
@@ -221,9 +225,10 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 ### Bunny AI 工具自媒体 agent
 
 Bunny 是可选的 AI 工具方向 X/Twitter 自媒体 agent surface，以 Codex 作为
-底座。可在 Codex profile 里发送 `/bunny`，或通过飞书悬浮菜单文案 `Bunny`
-打开。这个入口只把飞书动作路由到独立的 Bunny Codex session；它不是旧的
-Bunny 本地控制 server，也不是用户侧 CLI 命令组。
+底座。可在 Codex profile 里通过飞书悬浮菜单文案 `Bunny` 打开，然后使用
+Bunny 首页卡片按钮，或 `Bunny 选题` 这类精确菜单文案触发业务动作。这个入口
+只把飞书动作路由到独立的 Bunny Codex session；它不是旧的 Bunny 本地控制
+server，也不是用户侧 CLI 命令组。
 
 Bunny 使用：
 

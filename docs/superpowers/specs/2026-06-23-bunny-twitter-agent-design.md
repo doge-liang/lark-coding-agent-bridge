@@ -3,10 +3,10 @@
 Date: 2026-06-23
 
 2026-06-24 update: the Lark entry-point details are superseded by
-`2026-06-24-bunny-codex-lark-bridge-design.md`. `/bunny` now exists only as a
-thin Lark command/menu entry that opens Bunny and queues explicit skill events
-into a Codex-backed Bunny scope; the old local control server and user-facing
-CLI command group remain out of scope.
+`2026-06-24-bunny-codex-lark-bridge-design.md`. Bunny now enters through
+Feishu/Lark menu text and card actions, not through a `/bunny` bridge slash
+command; the old local control server and user-facing CLI command group remain
+out of scope.
 
 ## Summary
 

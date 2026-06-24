@@ -5,9 +5,9 @@
 > 2026-06-24 update: the runtime/package work in this plan is complete, but the
 > Lark entry-point details are superseded by
 > `docs/superpowers/specs/2026-06-24-bunny-codex-lark-bridge-design.md`.
-> `/bunny` now exists as a thin Lark command/menu entry into a Codex-backed
-> Bunny scope; the removed HTTP server and user-facing host CLI remain out of
-> scope.
+> Bunny now enters through Feishu/Lark exact menu text and card actions into a
+> Codex-backed Bunny scope. `/bunny` is not registered as a bridge slash command;
+> the removed HTTP server and user-facing host CLI remain out of scope.
 
 **Goal:** Convert Bunny from the superseded CLI/slash-command design into a repo-managed Andy-like agent with explicit business skills, hooks, and Feishu/Lark menu/card actions.
 

@@ -96,16 +96,7 @@ import type { WorkspaceStore } from '../workspace/store';
 import { createBoundChat, defaultChatName } from '../bot/group';
 import { fetchKnownChats, type KnownChat } from '../bot/lark-info';
 import { applyLarkCliIdentityPolicy, hasStructuredLarkCliUserAuth } from '../lark-cli/identity-policy';
-import {
-  BUNNY_AGENT_ACTIONS,
-  bunnyActionPayload,
-  bunnyHomeCard,
-  type BunnyAgentAction,
-} from '../bunny/agent/cards';
-import { bunnyScopeFor, bunnySkillEventContent } from '../bunny/agent/bridge';
-import { BUNNY_AGENT_MANIFEST, type BunnySkillName } from '../bunny/agent/manifest';
-import { resolveBunnyPaths } from '../bunny/config';
-import { BunnyStore } from '../bunny/store';
+import { handleBunnyEntry, parseBunnyMenuAction } from '../bunny/agent/lark-entry';
 
 export interface Controls {
   profile: string;
@@ -194,7 +185,6 @@ const handlers: Record<string, Handler> = {
   '/resume': handleResume,
   '/status': handleStatus,
   '/usage': handleUsage,
-  '/bunny': handleBunny,
   '/menu': handleMenu,
   '/help': handleHelp,
   '/account': handleAccount,
@@ -216,9 +206,6 @@ const commandAliases = new Map<string, string>([
   ['帮助', '/help'],
   ['状态', '/status'],
   ['用量', '/usage'],
-  ['Bunny', '/bunny'],
-  ['bunny', '/bunny'],
-  ['兔子', '/bunny'],
   ['恢复', '/resume'],
   ['工作目录', '/ws'],
   ['新对话', '/new'],
@@ -253,6 +240,11 @@ function isAdminCommand(cmd: string): boolean {
 
 export async function tryHandleCommand(ctx: CommandContext): Promise<boolean> {
   const trimmed = ctx.msg.content.trim();
+  const bunnyMenuAction = parseBunnyMenuAction(trimmed);
+  if (bunnyMenuAction) {
+    await handleBunnyEntry(ctx, bunnyMenuAction, 'lark-menu');
+    return true;
+  }
   const commandText = commandAliases.get(trimmed) ?? trimmed;
   if (!commandText.startsWith('/')) return false;
   const parts = commandText.split(/\s+/);
@@ -893,145 +885,8 @@ async function handleUsage(_args: string, ctx: CommandContext): Promise<void> {
   await ctx.channel.send(ctx.msg.chatId, { card: usageCard(formatUsageCardInfo(usage)) }, { replyTo: ctx.msg.messageId });
 }
 
-async function handleBunny(args: string, ctx: CommandContext): Promise<void> {
-  const action = parseBunnyAction(args);
-  if (action === 'home' || action === 'status') {
-    await sendBunnyHome(ctx);
-    return;
-  }
-  if (!action) {
-    await reply(ctx, bunnyUsage());
-    return;
-  }
-  if (ctx.controls.profileConfig.agentKind !== 'codex') {
-    await reply(ctx, 'Bunny 需要当前 profile 使用 Codex agent。请切到 Codex profile 后再执行 Bunny 动作。');
-    return;
-  }
-  if (!ctx.pending) {
-    await reply(ctx, '当前 bridge 运行环境不支持 Bunny 事件队列，请重启后再试。');
-    return;
-  }
-
-  const payload = bunnyActionPayload(action);
-  const skill = typeof payload.bunny_skill === 'string'
-    ? (payload.bunny_skill as BunnySkillName)
-    : undefined;
-  const bunnyScope = bunnyScopeFor(ctx.scope);
-  const inheritedCwd = ctx.workspaces.cwdFor(ctx.scope);
-  if (inheritedCwd && !ctx.workspaces.cwdFor(bunnyScope)) {
-    ctx.workspaces.setCwd(bunnyScope, inheritedCwd);
-  }
-
-  const size = ctx.pending.push(
-    bunnyScope,
-    makeBunnySyntheticMessage(ctx, action, skill),
-  );
-  log.info('command', 'bunny-queued', {
-    scope: bunnyScope,
-    action,
-    skill,
-    queueSize: size,
-  });
-  if (!ctx.fromCardAction) {
-    await reply(ctx, `Bunny 已收到：${bunnyActionLabel(action)}。`);
-  }
-}
-
-async function sendBunnyHome(ctx: CommandContext): Promise<void> {
-  let store: BunnyStore | undefined;
-  try {
-    const paths = resolveBunnyPaths(commandProfilePaths(ctx));
-    store = new BunnyStore(paths.dbFile);
-    const now = new Date().toISOString();
-    await ctx.channel.send(
-      ctx.msg.chatId,
-      { card: bunnyHomeCard({ status: store.status(), today: store.today(now) }) },
-      { replyTo: ctx.msg.messageId },
-    );
-  } catch (err) {
-    log.fail('command', err, { step: 'bunny-home' });
-    await reply(ctx, `Bunny 首页打开失败：${err instanceof Error ? err.message : String(err)}`);
-  } finally {
-    store?.close();
-  }
-}
-
 async function handleMenu(_args: string, ctx: CommandContext): Promise<void> {
   await ctx.channel.send(ctx.msg.chatId, { card: menuCard(ctx.agent.displayName) }, { replyTo: ctx.msg.messageId });
-}
-
-type BunnyCommandAction = BunnyAgentAction | 'home';
-
-function parseBunnyAction(args: string): BunnyCommandAction | undefined {
-  const [head] = args.trim().split(/\s+/);
-  const action = head?.toLowerCase();
-  if (!action || action === 'home' || action === 'menu' || action === 'open') return 'home';
-  if (BUNNY_AGENT_ACTIONS.includes(action as BunnyAgentAction)) {
-    return action as BunnyAgentAction;
-  }
-  const skillAction = BUNNY_AGENT_MANIFEST.skills.find((skill) => skill.name === action)?.name;
-  if (!skillAction) return undefined;
-  return actionForBunnySkill(skillAction);
-}
-
-function actionForBunnySkill(skill: BunnySkillName): BunnyAgentAction | undefined {
-  switch (skill) {
-    case 'research_topics':
-      return 'research';
-    case 'generate_drafts':
-      return 'draft';
-    case 'review_queue':
-      return 'review';
-    case 'schedule_posts':
-      return 'schedule';
-    case 'pause_publishing':
-      return 'pause';
-    case 'resume_publishing':
-      return 'resume';
-    case 'daily_report':
-      return 'report';
-    case 'quality_check':
-      return 'review';
-  }
-}
-
-function makeBunnySyntheticMessage(
-  ctx: CommandContext,
-  action: BunnyAgentAction,
-  skill: BunnySkillName | undefined,
-): NormalizedMessage {
-  return {
-    messageId: ctx.msg.messageId,
-    chatId: ctx.msg.chatId,
-    chatType: ctx.msg.chatType,
-    threadId: ctx.msg.threadId,
-    senderId: ctx.msg.senderId,
-    senderName: ctx.msg.senderName,
-    content: bunnySkillEventContent({
-      action,
-      ...(skill ? { skill } : {}),
-      source: ctx.fromCardAction ? 'lark-card' : 'lark-command',
-      confirmed: false,
-    }),
-    rawContentType: 'bunny_action',
-    resources: [],
-    mentions: [],
-    mentionAll: false,
-    mentionedBot: false,
-    createTime: Date.now(),
-  };
-}
-
-function bunnyUsage(): string {
-  return '用法：`/bunny [research|draft|review|schedule|report|pause|resume|status]`。直接发送 `/bunny` 打开 Bunny 首页。';
-}
-
-function bunnyActionLabel(action: BunnyAgentAction): string {
-  const skill = bunnyActionPayload(action).bunny_skill;
-  const definition = typeof skill === 'string'
-    ? BUNNY_AGENT_MANIFEST.skills.find((candidate) => candidate.name === skill)
-    : undefined;
-  return definition?.label ?? action;
 }
 
 function codexUsageHome(ctx: CommandContext): string | undefined {

@@ -105,10 +105,14 @@ describe('README runtime contract', () => {
     expect(docs).toContain('Bunny AI 工具自媒体 agent');
     expect(docs).toContain('Codex-backed agent surface');
     expect(docs).toContain('以 Codex 作为');
-    expect(docs).toContain('/bunny');
+    expect(docs).toContain('floating-menu label `Bunny`');
+    expect(docs).toContain('Bunny 选题');
     expect(docs).toContain('explicit business skills');
     expect(docs).toContain('显式业务 skill');
     expect(docs).toContain('Feishu/Lark menu');
+    expect(docs).not.toContain('| `/bunny` |');
+    expect(docs).not.toContain('Open it with `/bunny`');
+    expect(docs).not.toContain('发送 `/bunny`');
     expect(docs).not.toContain('lark-channel-bridge bunny serve');
   });
 });

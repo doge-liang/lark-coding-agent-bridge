@@ -65,11 +65,13 @@ describe('signed card callback dispatch', () => {
     expect(queued[0]?.chatType).toBe('group');
   });
 
-  it('routes Bunny command buttons into the Bunny Codex scope', async () => {
+  it('routes Bunny card actions into the Bunny Codex scope without a /bunny command', async () => {
     const h = await createHarness({ agentKind: 'codex' });
 
     await h.dispatch({
-      cmd: 'bunny.research',
+      domain: 'bunny',
+      bunny_action: 'research',
+      bunny_skill: 'research_topics',
     });
 
     expect(h.pending.cancel('oc_group')).toHaveLength(0);

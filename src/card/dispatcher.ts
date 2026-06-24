@@ -13,6 +13,7 @@ import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { commandSessionCatalogIdentity } from '../bot/session-catalog-identity';
+import { handleBunnyEntry, parseBunnyCardAction } from '../bunny/agent/lark-entry';
 
 /** Marker key on a button's value object that flags the cardAction as
  * a callback that should be forwarded back to the agent instead
@@ -78,6 +79,39 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
 
   if (LEGACY_CLAUDE_CALLBACK_MARKER in payload) {
     log.info('cardAction', 'skip-legacy-callback-marker', { scope });
+    return;
+  }
+
+  const bunnyAction = parseBunnyCardAction(payload);
+  if (bunnyAction) {
+    log.info('cardAction', 'bunny', { action: bunnyAction, scope });
+    const msg = makeFakeMsg(deps.evt, threadId);
+    const ctx: CommandContext = {
+      channel: deps.channel,
+      msg,
+      scope,
+      chatMode: mode,
+      sessions: deps.sessions,
+      sessionCatalog: deps.sessionCatalog,
+      sessionCatalogIdentity: await commandSessionCatalogIdentity({
+        msg,
+        scope,
+        mode,
+        workspaces: deps.workspaces,
+        controls: deps.controls,
+        access: accessDecision,
+      }),
+      workspaces: deps.workspaces,
+      activeRuns: deps.activeRuns,
+      agent: deps.agent,
+      processPool: deps.processPool,
+      runExecutor: deps.runExecutor,
+      controls: deps.controls,
+      formValue,
+      fromCardAction: true,
+      pending: deps.pending,
+    };
+    await handleBunnyEntry(ctx, bunnyAction, 'lark-card');
     return;
   }
 

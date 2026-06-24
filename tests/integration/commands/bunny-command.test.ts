@@ -25,33 +25,36 @@ interface Harness {
 
 const cleanups: Array<() => Promise<void>> = [];
 
-describe('Bunny command bridge', () => {
+describe('Bunny Feishu entry bridge', () => {
   afterEach(async () => {
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
   });
 
-  it('opens the Bunny home card from slash command and floating-menu alias', async () => {
+  it('opens the Bunny home card from the Feishu floating-menu label, not /bunny', async () => {
     const h = await createHarness();
 
-    await expect(h.run('/bunny')).resolves.toBe(true);
-    expect(lastContent(h.channel)).toHaveProperty('card');
-    expect(JSON.stringify(lastContent(h.channel))).toContain('Bunny');
-    expect(JSON.stringify(lastContent(h.channel))).toContain('bunny.research');
+    await expect(h.run('/bunny')).resolves.toBe(false);
 
     await expect(h.run('Bunny')).resolves.toBe(true);
-    expect(JSON.stringify(lastContent(h.channel))).toContain('bunny.schedule');
+    expect(lastContent(h.channel)).toHaveProperty('card');
+    const card = JSON.stringify(lastContent(h.channel));
+    expect(card).toContain('Bunny');
+    expect(card).toContain('bunny_action');
+    expect(card).toContain('schedule_posts');
+    expect(card).not.toContain('/bunny');
+    expect(card).not.toContain('bunny.research');
   });
 
-  it('queues explicit Bunny skill actions into a Codex-backed Bunny scope', async () => {
+  it('queues exact Feishu menu skill actions into a Codex-backed Bunny scope', async () => {
     const h = await createHarness();
     h.workspaces.setCwd('chat-1', h.tmp.workspace);
 
-    await expect(h.run('/bunny research')).resolves.toBe(true);
+    await expect(h.run('Bunny 选题')).resolves.toBe(true);
 
     const queued = h.pending.cancel('chat-1:bunny');
     expect(queued).toHaveLength(1);
     expect(queued[0]?.content).toBe(
-      '[bunny-skill] {"domain":"bunny","action":"research","skill":"research_topics","source":"lark-command","confirmed":false}',
+      '[bunny-skill] {"domain":"bunny","action":"research","skill":"research_topics","source":"lark-menu","confirmed":false}',
     );
     expect(h.workspaces.cwdFor('chat-1:bunny')).toBe(h.tmp.workspace);
     expect(lastMarkdown(h.channel)).toContain('Bunny 已收到');
@@ -60,7 +63,7 @@ describe('Bunny command bridge', () => {
   it('refuses Bunny skill actions outside Codex profiles', async () => {
     const h = await createHarness({ agentKind: 'claude' });
 
-    await expect(h.run('/bunny research')).resolves.toBe(true);
+    await expect(h.run('Bunny 选题')).resolves.toBe(true);
 
     expect(h.pending.cancel('chat-1:bunny')).toHaveLength(0);
     expect(lastMarkdown(h.channel)).toContain('需要当前 profile 使用 Codex');

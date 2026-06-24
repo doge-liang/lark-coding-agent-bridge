@@ -22,7 +22,7 @@ export interface BunnyPromptProfile {
 export interface BunnySkillEventInput {
   action: BunnyAgentAction;
   skill?: BunnySkillName;
-  source: 'lark-command' | 'lark-card';
+  source: 'lark-menu' | 'lark-card';
   confirmed?: boolean;
 }
 
