@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { CommandContext } from '../commands';
 import { resolveAppPaths } from '../config/app-paths';
 import { getServiceAdapter } from '../daemon/service-adapter';
+import { writeUpgradeLauncherScript } from './launcher-script';
 import {
   UpgradeManager,
   type UpgradeApplyResult,
@@ -11,6 +12,7 @@ import {
   type UpgradeRollbackResult,
   type UpgradeStatus,
 } from './manager';
+import { resolveUpgradePaths } from './paths';
 import type { UpgradeActivationNotify } from './state';
 
 export interface UpgradeCommandService {
@@ -30,6 +32,7 @@ export function createUpgradeCommandService(ctx: CommandContext): UpgradeCommand
     currentPath: currentBridgeRoot(),
     restartService: () =>
       adapter ? adapter.restart() : { ok: false, stderr: '当前系统不支持后台 service restart' },
+    refreshLauncher: () => refreshUpgradeLauncher(appPaths),
     activationNotify: activationNotifyTarget(ctx),
   });
   return {
@@ -47,9 +50,22 @@ function activationNotifyTarget(ctx: CommandContext): UpgradeActivationNotify {
   };
 }
 
+function currentBridgeEntry(): string {
+  return process.argv[1] ? realpathIfPresent(process.argv[1]) : fileURLToPath(import.meta.url);
+}
+
 function currentBridgeRoot(): string {
-  const entryPath = process.argv[1] ? realpathIfPresent(process.argv[1]) : fileURLToPath(import.meta.url);
+  const entryPath = currentBridgeEntry();
   return resolveBridgeRootFromEntry(entryPath);
+}
+
+async function refreshUpgradeLauncher(appPaths: ReturnType<typeof resolveAppPaths>): Promise<void> {
+  await writeUpgradeLauncherScript(resolveUpgradePaths(appPaths).launcherFile, {
+    profile: appPaths.profile,
+    channelHome: appPaths.rootDir,
+    fallbackNodePath: process.execPath,
+    fallbackBridgeEntryPath: currentBridgeEntry(),
+  });
 }
 
 export function resolveBridgeRootFromEntry(entryPath: string): string {

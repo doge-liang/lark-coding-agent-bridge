@@ -38,6 +38,7 @@ export interface UpgradeManagerOptions {
   currentPath: string;
   runCommand?: UpgradeRunCommand;
   restartService: () => Promise<ServiceResult> | ServiceResult;
+  refreshLauncher?: () => Promise<void> | void;
   activationNotify?: UpgradeActivationNotify;
   now?: () => Date;
   operationId?: () => string;
@@ -186,6 +187,12 @@ export class UpgradeManager {
         await mkdir(this.paths.releasesDir, { recursive: true });
         await rm(releasePath, { recursive: true, force: true });
         await rename(staging, releasePath);
+        try {
+          await this.options.refreshLauncher?.();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return fail('launcher', message);
+        }
 
         const state = await loadUpgradeState(this.paths.stateFile);
         const next = setPendingActivation(state, {

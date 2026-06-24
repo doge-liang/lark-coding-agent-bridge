@@ -131,6 +131,37 @@ describe('UpgradeManager', () => {
     expect(h.restart).toHaveBeenCalledTimes(1);
   });
 
+  it('refreshes the launcher before requesting restart after verification passes', async () => {
+    const h = await harness({ enabled: true });
+    await saveUpgradeState(h.paths.stateFile, {
+      current: { commit: 'old', path: h.currentPath },
+    });
+    h.run
+      .mockResolvedValueOnce({ ok: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ ok: true, stdout: 'new\n', stderr: '' })
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: 'https://github.com/doge-liang/lark-coding-agent-bridge.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({ ok: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ ok: true, stdout: 'new\n', stderr: '' })
+      .mockResolvedValue({ ok: true, stdout: '', stderr: '' });
+    const order: string[] = [];
+    h.refreshLauncher.mockImplementation(async () => {
+      order.push('launcher');
+    });
+    h.restart.mockImplementation(async () => {
+      order.push('restart');
+      return { ok: true, stderr: '' };
+    });
+
+    const result = await h.manager.apply();
+
+    expect(result.status).toBe('ok');
+    expect(order).toEqual(['launcher', 'restart']);
+  });
+
   it('releases the upgrade state lock before requesting restart', async () => {
     const h = await harness({ enabled: true });
     await saveUpgradeState(h.paths.stateFile, {
@@ -247,15 +278,17 @@ async function harness(
   const paths = resolveUpgradePaths(appPaths);
   const run = vi.fn();
   const restart = vi.fn();
+  const refreshLauncher = vi.fn();
   const manager = new UpgradeManager({
     appPaths,
     profileConfig,
     currentPath,
     runCommand: run,
     restartService: restart,
+    refreshLauncher,
     now: () => new Date('2026-06-20T00:00:00.000Z'),
     operationId: () => 'op-1',
     ...(activationNotify ? { activationNotify } : {}),
   });
-  return { root, appPaths, profileConfig, paths, currentPath, run, restart, manager };
+  return { root, appPaths, profileConfig, paths, currentPath, run, restart, refreshLauncher, manager };
 }
