@@ -216,6 +216,25 @@ Bot custom menus are configured and published in the Feishu / Lark Developer Con
 
 Send `/menu` in Feishu / Lark for a configuration card. Floating menus are DM-only and require Feishu / Lark client 7.22 or later; after publishing an app version, it may take about 5 minutes to appear.
 
+### Bunny AI tools media agent
+
+Bunny is an optional agent runtime layer for AI tools X/Twitter content
+operations. It is controlled by Bunny environment variables and repo-managed
+runtime wiring, not by the superseded Bunny slash-command, local control server,
+or user-facing CLI command group.
+
+Bunny uses:
+
+- a Bunny-specific system prompt
+- explicit business skills for research, draft generation, review, scheduling,
+  pause/resume, and daily reports
+- hooks for scheduled ingestion, draft checks, publishing gates, and reporting
+- Feishu/Lark menu or card actions for state-changing operations
+
+Natural-language chat is reserved for low-risk advisory work. Publishing,
+scheduling, pausing, and resuming require explicit business skills or signed
+card callbacks.
+
 ## lark-cli identity policy
 
 Each profile uses a profile-local lark-cli directory at `~/.lark-channel/profiles/<profile>/lark-cli`. The agent process receives `LARKSUITE_CLI_CONFIG_DIR` for that directory, so personal authorization in one profile is not shared with another profile.

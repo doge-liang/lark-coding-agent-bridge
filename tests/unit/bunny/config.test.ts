@@ -38,12 +38,26 @@ describe('bunny config', () => {
       BUNNY_LLM_MODEL: 'agent-model',
     });
 
-    expect(cfg.baseUrl).toBe('http://127.0.0.1:3827');
-    expect(cfg.xBearerToken).toBe('x-token');
+    expect(cfg).not.toHaveProperty('baseUrl');
+    expect(cfg).not.toHaveProperty('xBearerToken');
+    expect(cfg.xApi).toEqual({
+      bearerToken: 'x-token',
+    });
     expect(cfg.llm).toEqual({
       endpoint: 'https://llm.example.test/v1/chat/completions',
       apiKey: 'llm-key',
       model: 'agent-model',
     });
+  });
+
+  it('omits optional runtime integrations when environment values are incomplete', () => {
+    const cfg = loadBunnyConfigFromEnv({
+      BUNNY_BASE_URL: 'http://127.0.0.1:3827',
+      BUNNY_X_BEARER_TOKEN: '   ',
+      BUNNY_LLM_ENDPOINT: 'https://llm.example.test/v1/chat/completions',
+      BUNNY_LLM_API_KEY: 'llm-key',
+    });
+
+    expect(cfg).toEqual({});
   });
 });

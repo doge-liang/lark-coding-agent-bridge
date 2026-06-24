@@ -31,14 +31,12 @@ export function defaultBunnySettings(): BunnySettings {
 }
 
 export function loadBunnyConfigFromEnv(env: NodeJS.ProcessEnv = process.env): BunnyRuntimeConfig {
-  const baseUrl = nonEmpty(env.BUNNY_BASE_URL) ?? 'http://127.0.0.1:3827';
   const endpoint = nonEmpty(env.BUNNY_LLM_ENDPOINT);
   const apiKey = nonEmpty(env.BUNNY_LLM_API_KEY);
   const model = nonEmpty(env.BUNNY_LLM_MODEL);
   const bearer = nonEmpty(env.BUNNY_X_BEARER_TOKEN);
   return {
-    baseUrl,
-    ...(bearer ? { xBearerToken: bearer } : {}),
+    ...(bearer ? { xApi: { bearerToken: bearer } } : {}),
     ...(endpoint && apiKey && model ? { llm: { endpoint, apiKey, model } } : {}),
   };
 }

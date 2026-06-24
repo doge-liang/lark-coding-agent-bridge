@@ -17,10 +17,10 @@ describe('CLI command registration', () => {
     expect(appSecretOptions.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('registers the Bunny command group in help output', async () => {
+  it('does not register the superseded Bunny command group', async () => {
     const help = await readFile(join(process.cwd(), 'src', 'cli', 'index.ts'), 'utf8');
 
-    expect(help).toContain('bunny');
-    expect(help).toContain('Run and inspect the Bunny AI tools media agent');
+    expect(help).not.toContain("command('bunny')");
+    expect(help).not.toContain('Run and inspect the Bunny AI tools media agent');
   });
 });

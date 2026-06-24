@@ -13,8 +13,9 @@ export interface BunnySettings {
 }
 
 export interface BunnyRuntimeConfig {
-  baseUrl: string;
-  xBearerToken?: string;
+  xApi?: {
+    bearerToken: string;
+  };
   llm?: {
     endpoint: string;
     apiKey: string;

@@ -191,7 +191,7 @@ export class BunnyEngine {
     const settings = this.store.getSettings();
     return new XApiAdapter({
       livePublishing: settings.livePublishing,
-      ...(runtime.xBearerToken ? { bearerToken: runtime.xBearerToken } : {}),
+      ...(runtime.xApi ? { bearerToken: runtime.xApi.bearerToken } : {}),
     });
   }
 }

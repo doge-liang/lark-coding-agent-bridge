@@ -216,6 +216,22 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 
 在飞书里发送 `/menu` 可以查看完整配置卡片。悬浮菜单仅支持单聊，客户端需为飞书 7.22 及以上；应用版本发布后通常需要等待约 5 分钟生效。
 
+### Bunny AI 工具自媒体 agent
+
+Bunny 是可选的 AI 工具方向 X/Twitter 自媒体 agent runtime layer，由 Bunny
+环境变量和 repo 内 runtime 接线控制，不是旧的 Bunny slash command、本地
+控制 server，也不是用户侧 CLI 命令组。
+
+Bunny 使用：
+
+- 独立的 Bunny system prompt
+- 显式业务 skill：选题、生成草稿、审核、排期、暂停/恢复、日报
+- hooks：定时采集、草稿检查、发布前门禁、发布后记录、日报
+- 飞书菜单或卡片动作来触发有状态业务操作
+
+自然语言只用于低风险咨询和改稿。发布、排期、暂停和恢复必须通过显式
+业务 skill 或签名卡片回调触发。
+
 ## lark-cli 身份策略
 
 每个 profile 都使用当前 profile 的 lark-cli 目录：`~/.lark-channel/profiles/<profile>/lark-cli`。agent 子进程会收到指向这个目录的 `LARKSUITE_CLI_CONFIG_DIR`，所以一个 profile 里的个人授权不会共享给另一个 profile。
