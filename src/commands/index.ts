@@ -95,6 +95,7 @@ import {
   type CodexUsageSnapshot,
   type TokenUsage,
 } from '../session/codex-usage';
+import { readCodexModelConfig, writeCodexModelConfig } from '../config/codex-config-file';
 import type { SessionCatalog, SessionCatalogIdentity } from '../session/catalog';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
 import type { SessionStore } from '../session/store';
@@ -2249,7 +2250,7 @@ function isCodexProfile(profile: ProfileConfig): boolean {
 }
 
 async function showCodexConfigForm(ctx: CommandContext): Promise<void> {
-  const card = codexConfigFormCard(codexConfigFormOpts(ctx));
+  const card = codexConfigFormCard(await codexConfigFormOpts(ctx));
   if (ctx.fromCardAction) await recallMessage(ctx, ctx.msg.messageId);
   await sendManagedCard(ctx.channel, ctx.msg.chatId, card);
 }
@@ -2302,19 +2303,27 @@ async function submitCodexConfig(ctx: CommandContext): Promise<void> {
   })();
 }
 
-function codexConfigFormOpts(ctx: CommandContext): CodexConfigFormOpts {
+async function codexConfigFormOpts(ctx: CommandContext): Promise<CodexConfigFormOpts> {
   const profile = ctx.controls.profileConfig;
   const codex = profile.codex;
   if (!codex) throw new Error('current profile has no Codex config');
   const profileCodexHomePath = join(commandProfilePaths(ctx).profileDir, 'codex-home');
   const codexHomeMode: CodexHomeMode =
     codex.codexHome ? 'custom' : codex.inheritCodexHome === false ? 'profile' : 'inherit';
+  const codexConfigFile = codexConfigFileForHome(ctx, {
+    codexHome: codex.codexHome,
+    inheritCodexHome: codex.inheritCodexHome !== false,
+  });
+  const modelConfig = await readCodexModelConfig(codexConfigFile);
   return {
     profileName: ctx.controls.profile,
     binaryPath: codex.binaryPath,
     defaultWorkspace: profile.workspaces.default ?? '',
     defaultAccess: profile.permissions.defaultAccess,
     maxAccess: profile.permissions.maxAccess,
+    model: modelConfig.model,
+    modelReasoningEffort: modelConfig.modelReasoningEffort,
+    codexConfigFile,
     codexHomeMode,
     codexHomePath: codex.codexHome ?? '',
     profileCodexHomePath,
@@ -2327,7 +2336,7 @@ async function saveCodexProfileConfig(
   ctx: CommandContext,
   fv: Record<string, unknown>,
 ): Promise<CodexConfigFormOpts> {
-  const current = codexConfigFormOpts(ctx);
+  const current = await codexConfigFormOpts(ctx);
   const defaultAccess = parseAccessMode(fv.default_access, current.defaultAccess);
   const maxAccess = parseAccessMode(fv.max_access, current.maxAccess);
   assertAccessPair(defaultAccess, maxAccess);
@@ -2337,8 +2346,15 @@ async function saveCodexProfileConfig(
     : current.defaultWorkspace;
   const defaultWorkspace = await resolveOptionalProfileDirectory(rawWorkspace, '默认工作目录');
   const home = await resolveCodexHomeConfig(fv, current);
+  const model = Object.hasOwn(fv, 'model') ? String(fv.model ?? '').trim() : current.model;
+  const modelReasoningEffort = Object.hasOwn(fv, 'model_reasoning_effort')
+    ? String(fv.model_reasoning_effort ?? '').trim()
+    : current.modelReasoningEffort;
+  const codexConfigFile = codexConfigFileForHome(ctx, home);
   const ignoreUserConfig = parseYesNo(fv.ignore_user_config, current.ignoreUserConfig);
   const ignoreRules = parseYesNo(fv.ignore_rules, current.ignoreRules);
+
+  await writeCodexModelConfig(codexConfigFile, { model, modelReasoningEffort });
 
   await withConfigFileLock(ctx.controls.configPath, async () => {
     const root = await loadRootConfig(ctx.controls.configPath);
@@ -2448,6 +2464,23 @@ function commandProfilePaths(ctx: CommandContext) {
     rootDir: dirname(ctx.controls.configPath),
     profile: ctx.controls.profile,
   });
+}
+
+function codexConfigFileForHome(
+  ctx: CommandContext,
+  home: { codexHome?: string; inheritCodexHome: boolean },
+): string {
+  const homeDir = home.codexHome
+    ? home.codexHome
+    : home.inheritCodexHome
+      ? inheritedCodexHomePath()
+      : join(commandProfilePaths(ctx).profileDir, 'codex-home');
+  return join(homeDir, 'config.toml');
+}
+
+function inheritedCodexHomePath(): string {
+  const envHome = process.env.CODEX_HOME?.trim();
+  return envHome ? expandTilde(envHome) : join(homedir(), '.codex');
 }
 
 async function applyConfigLarkCliIdentityPolicy(

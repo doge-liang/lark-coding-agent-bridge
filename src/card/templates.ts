@@ -272,7 +272,7 @@ export function helpCard(agentName = 'Agent'): object {
         '- `/ws list|save <name>|use <name>|remove <name>` — 工作目录',
         '- `/account` — 查看当前应用；`/account change` 换 appId/secret 并重连',
         '- `/config` — 调整偏好、访问控制和 lark-cli 身份策略',
-        '- `/codex-config` — 调整当前 Codex profile 的权限、默认工作目录和 Codex home',
+        '- `/codex-config` — 调整当前 Codex profile 的权限、模型、默认工作目录和 Codex home',
         '- `/status` — 当前状态',
         '- `/usage` — 查看当前 Codex session 的 token 用量和上下文窗口',
         '- `/menu` — 查看飞书机器人悬浮菜单配置建议',

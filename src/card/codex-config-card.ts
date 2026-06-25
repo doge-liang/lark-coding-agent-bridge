@@ -8,6 +8,9 @@ export interface CodexConfigFormOpts {
   defaultWorkspace: string;
   defaultAccess: AccessMode;
   maxAccess: AccessMode;
+  model: string;
+  modelReasoningEffort: string;
+  codexConfigFile: string;
   codexHomeMode: CodexHomeMode;
   codexHomePath: string;
   profileCodexHomePath: string;
@@ -21,12 +24,35 @@ const accessOptions: Array<{ label: string; value: AccessMode }> = [
   { label: '完全访问(full)', value: 'full' },
 ];
 
+const reasoningEffortOptions = [
+  { label: '默认(不写入)', value: 'default' },
+  { label: 'minimal', value: 'minimal' },
+  { label: 'low', value: 'low' },
+  { label: 'medium', value: 'medium' },
+  { label: 'high', value: 'high' },
+  { label: 'xhigh', value: 'xhigh' },
+];
+
 function accessSelect(name: string, initial: AccessMode): object {
   return {
     tag: 'select_static',
     name,
     initial_option: initial,
     options: accessOptions.map((option) => ({
+      text: { tag: 'plain_text', content: option.label },
+      value: option.value,
+    })),
+  };
+}
+
+function reasoningEffortSelect(name: string, initial: string): object {
+  const values = new Set(reasoningEffortOptions.map((option) => option.value));
+  const initialOption = initial && values.has(initial) ? initial : 'default';
+  return {
+    tag: 'select_static',
+    name,
+    initial_option: initialOption,
+    options: reasoningEffortOptions.map((option) => ({
       text: { tag: 'plain_text', content: option.label },
       value: option.value,
     })),
@@ -102,6 +128,21 @@ export function codexConfigFormCard(opts: CodexConfigFormOpts): object {
                 '_限制这个 profile 最多能提升到什么访问级别。_',
             },
             accessSelect('max_access', opts.maxAccess),
+            {
+              tag: 'markdown',
+              content:
+                '\n**模型**\n' +
+                '_写入当前 Codex home 的 `config.toml` 顶层 `model` 和 `model_reasoning_effort`; 留空/默认表示删除对应项并使用 Codex 默认或上层配置。_\n' +
+                `config:\`${opts.codexConfigFile}\``,
+            },
+            {
+              tag: 'input',
+              name: 'model',
+              default_value: opts.model,
+              placeholder: { tag: 'plain_text', content: 'gpt-5.5' },
+              input_type: 'text',
+            },
+            reasoningEffortSelect('model_reasoning_effort', opts.modelReasoningEffort),
             {
               tag: 'markdown',
               content:
@@ -193,10 +234,12 @@ export function codexConfigSavedCard(opts: CodexConfigFormOpts): object {
             `**profile**:\`${opts.profileName}\`\n` +
             `**默认工作目录**:\`${opts.defaultWorkspace || '未设置'}\`\n` +
             `**权限**:\`${opts.defaultAccess}\` / max \`${opts.maxAccess}\`\n` +
+            `**模型**:\`${opts.model || '默认'}\` / effort \`${opts.modelReasoningEffort || '默认'}\`\n` +
+            `**Codex config**:\`${opts.codexConfigFile}\`\n` +
             `**Codex home**:${homeModeLabel(opts.codexHomeMode, opts)}\n` +
             `**忽略用户配置**:\`${opts.ignoreUserConfig ? '是' : '否'}\`\n` +
             `**忽略规则文件**:\`${opts.ignoreRules ? '是' : '否'}\`\n\n` +
-            '权限和默认工作目录下条消息开始生效。Codex home、用户配置、规则文件设置需要重启当前 profile 后完全生效。',
+            '权限、默认工作目录和模型配置从新的 Codex 会话开始生效。Codex home、用户配置、规则文件设置需要重启当前 profile 后完全生效。',
         },
       ],
     },

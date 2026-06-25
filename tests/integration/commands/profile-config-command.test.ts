@@ -63,6 +63,8 @@ describe('profile-aware account and config commands', () => {
     expect(card).toContain('Codex profile 设置');
     expect(card).toContain('default_access');
     expect(card).toContain('max_access');
+    expect(card).toContain('model');
+    expect(card).toContain('model_reasoning_effort');
     expect(card).toContain('codex_home_mode');
     expect(card).toContain('ignore_user_config');
     expect(card).toContain('ignore_rules');
@@ -75,11 +77,18 @@ describe('profile-aware account and config commands', () => {
     const customCodexHome = join(h.rootDir, 'custom-codex-home');
     await mkdir(nextWorkspace, { recursive: true });
     await mkdir(customCodexHome, { recursive: true });
+    await writeFile(
+      join(customCodexHome, 'config.toml'),
+      '[features]\nshell_snapshot = true\n',
+      'utf8',
+    );
 
     await h.command('/codex-config submit', {
       default_workspace: nextWorkspace,
       default_access: 'workspace',
       max_access: 'full',
+      model: 'gpt-5.5',
+      model_reasoning_effort: 'xhigh',
       codex_home_mode: 'custom',
       codex_home_path: customCodexHome,
       ignore_user_config: 'yes',
@@ -104,9 +113,15 @@ describe('profile-aware account and config commands', () => {
       ignoreUserConfig: true,
       ignoreRules: false,
     });
+    const codexConfig = await readFile(join(customCodexHome, 'config.toml'), 'utf8');
+    expect(codexConfig).toMatch(/^model = "gpt-5\.5"$/m);
+    expect(codexConfig).toMatch(/^model_reasoning_effort = "xhigh"$/m);
+    expect(codexConfig).toContain('[features]\nshell_snapshot = true');
     expect(root.profiles.claude?.workspaces.default).not.toBe(nextWorkspace);
     const card = lastContent(h);
     expect(card).toContain('Codex 设置已保存');
+    expect(card).toContain('gpt-5.5');
+    expect(card).toContain('xhigh');
     expect(card).toContain('需要重启当前 profile');
   });
 

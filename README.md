@@ -180,7 +180,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/usage` | Show current Codex session token usage and context window |
 | `/menu` | Show suggested Feishu / Lark bot floating-menu configuration |
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
-| `/codex-config` | Adjust the active Codex profile's permissions, default workspace, and Codex home |
+| `/codex-config` | Adjust the active Codex profile's permissions, model, default workspace, and Codex home |
 | `/invite user @name` | Allow a user to use the bot in DMs |
 | `/invite admin @name` | Add an access-control admin |
 | `/invite group` | Allow the current group to use the bot |
@@ -292,7 +292,7 @@ Mode mapping:
 
 The legacy `sandbox` field is still readable for old configs. After the bridge saves the profile, it migrates that setting to canonical `permissions`.
 
-For Codex profiles, owner/admin users can also send `/codex-config` or use the `Codex 设置` floating-menu entry to edit `workspaces.default`, canonical permissions, Codex home mode, `ignoreUserConfig`, and `ignoreRules` through a Feishu form card.
+For Codex profiles, owner/admin users can also send `/codex-config` or use the `Codex 设置` floating-menu entry to edit `workspaces.default`, canonical permissions, Codex home mode, `model`, `model_reasoning_effort`, `ignoreUserConfig`, and `ignoreRules` through a Feishu form card. Model settings are written to the `config.toml` under the Codex home selected for the active profile.
 
 ## Data directories
 
