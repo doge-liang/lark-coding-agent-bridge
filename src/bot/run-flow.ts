@@ -143,6 +143,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       policy,
       sessionId,
       threadId,
+      model: input.capability.agentId === 'claude' ? input.profileConfig.claude?.model : undefined,
       images:
         input.capability.agentId === 'codex'
           ? policy.attachments

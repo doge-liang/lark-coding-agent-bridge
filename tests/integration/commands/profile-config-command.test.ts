@@ -70,6 +70,16 @@ describe('profile-aware account and config commands', () => {
     expect(card).toContain('ignore_rules');
   });
 
+  it('opens the Claude profile form with a model field', async () => {
+    const h = await createHarness({ activeProfile: 'claude' });
+
+    await h.command('/config');
+
+    const card = lastContent(h);
+    expect(card).toContain('claude_model');
+    expect(card).toContain('Claude Code 模型');
+  });
+
   it('saves /codex-config submit into the active Codex profile', async () => {
     vi.useFakeTimers();
     const h = await createHarness({ activeProfile: 'codex-dev' });
@@ -145,10 +155,14 @@ describe('profile-aware account and config commands', () => {
       run_idle_timeout_minutes: '15',
       require_mention_in_group: 'no',
       lark_cli_identity: 'user-default',
+      upgrade_enabled: 'yes',
+      claude_model: 'sonnet',
     });
 
     const root = await waitForRoot(h.rootDir, (candidate) =>
-      candidate.profiles.claude?.preferences.messageReply === 'text',
+      candidate.profiles.claude?.preferences.messageReply === 'text' &&
+      candidate.profiles.claude?.upgrade.enabled === true &&
+      claudeModel(candidate.profiles.claude) === 'sonnet',
     );
     expect(root.schemaVersion).toBe(2);
     expect(root.activeProfile).toBe('claude');
@@ -162,12 +176,42 @@ describe('profile-aware account and config commands', () => {
     });
     expect(root.profiles.claude?.access.requireMentionInGroup).toBe(false);
     expect(root.profiles.claude?.larkCli.identityPreset).toBe('user-default');
+    expect(root.profiles.claude?.upgrade).toMatchObject({
+      enabled: true,
+      remote: 'origin',
+      branch: 'release',
+      requireTests: false,
+      healthTimeoutMs: 60_000,
+      retainReleases: 3,
+    });
+    expect(claudeModel(root.profiles.claude)).toBe('sonnet');
+    expect(root.profiles['codex-dev']?.upgrade.enabled).toBe(false);
     expect(root.profiles.claude?.larkCli.localUserImport).toMatchObject({
       status: 'not-needed',
       reason: 'manual-user-default',
     });
     expect(getRequireMentionInGroup(runtimeProfileConfig(root, 'claude'))).toBe(false);
     expect((root as unknown as { accounts?: unknown }).accounts).toBeUndefined();
+  });
+
+  it('keeps the existing Claude model when an old /config card submits no model field', async () => {
+    vi.useFakeTimers();
+    const h = await createHarness({ claudeModel: 'opus' });
+
+    await h.command('/config submit', {
+      message_reply: 'text',
+      show_tool_calls: 'hide',
+      max_concurrent_runs: '7',
+      run_idle_timeout_minutes: '15',
+      require_mention_in_group: 'no',
+      lark_cli_identity: 'bot-only',
+      upgrade_enabled: 'yes',
+    });
+
+    const root = await waitForRoot(h.rootDir, (candidate) =>
+      candidate.profiles.claude?.preferences.messageReply === 'text',
+    );
+    expect(claudeModel(root.profiles.claude)).toBe('opus');
   });
 
   it('does not save a lark-cli identity change when applying the runtime policy fails', async () => {
@@ -276,7 +320,7 @@ describe('profile-aware account and config commands', () => {
 });
 
 async function createHarness(
-  opts: { activeProfile?: 'claude' | 'codex-dev' } = {},
+  opts: { activeProfile?: 'claude' | 'codex-dev'; claudeModel?: string } = {},
 ): Promise<{
   rootDir: string;
   channel: ReturnType<typeof createFakeChannel>;
@@ -287,7 +331,7 @@ async function createHarness(
   roots.push(rootDir);
   const workspace = join(rootDir, 'workspace');
   await mkdir(workspace, { recursive: true });
-  const root = await writeRoot(rootDir, workspace, activeProfile);
+  const root = await writeRoot(rootDir, workspace, activeProfile, opts.claudeModel);
   const profileConfig = root.profiles[activeProfile]!;
   const appPaths = resolveAppPaths({ rootDir, profile: activeProfile });
   const channel = createFakeChannel();
@@ -330,6 +374,7 @@ async function writeRoot(
   rootDir: string,
   workspace: string,
   activeProfile: 'claude' | 'codex-dev' = 'claude',
+  claudeModel?: string,
 ): Promise<RootConfig> {
   const root: RootConfig = {
     schemaVersion: 2,
@@ -353,6 +398,11 @@ async function writeRoot(
       }),
     },
   };
+  if (claudeModel) {
+    (root.profiles.claude as unknown as { claude?: { model: string } }).claude = {
+      model: claudeModel,
+    };
+  }
   root.profiles.claude!.workspaces.default = workspace;
   root.profiles['codex-dev']!.workspaces.default = workspace;
   await writeJson(resolveAppPaths({ rootDir }).configFile, root);
@@ -394,6 +444,10 @@ function appliedLarkCliIdentities(): unknown[] {
   return (
     identityPolicyMocks.applyLarkCliIdentityPolicy.mock.calls as unknown as Array<[unknown, unknown]>
   ).map((call) => call[1]);
+}
+
+function claudeModel(profile: unknown): string | undefined {
+  return (profile as { claude?: { model?: string } } | undefined)?.claude?.model;
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {

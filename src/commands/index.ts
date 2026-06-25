@@ -1376,6 +1376,7 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
     execution = await ctx.runExecutor.submit({
       scopeId: `${ctx.scope}:doctor`,
       policy,
+      model: capability.agentId === 'claude' ? ctx.controls.profileConfig.claude?.model : undefined,
       nowait: true,
       stopGraceMs: getAgentStopGraceMs(ctx.controls.cfg),
       observability: {
@@ -1971,6 +1972,11 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     runIdleTimeoutMinutes: ms ? Math.round(ms / 60_000) : 0,
     requireMentionInGroup: getRequireMentionInGroup(ctx.controls.cfg),
     larkCliIdentity: ctx.controls.profileConfig.larkCli.identityPreset,
+    upgradeEnabled: ctx.controls.profileConfig.upgrade.enabled,
+    claudeModel:
+      ctx.controls.profileConfig.agentKind === 'claude'
+        ? (ctx.controls.profileConfig.claude?.model ?? '')
+        : undefined,
     allowedUsers: access.allowedUsers,
     allowedChats: access.allowedChats,
     admins: access.admins,
@@ -2055,6 +2061,16 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       : ctx.controls.profileConfig.larkCli.identityPreset;
   const previousLarkCliIdentity = ctx.controls.profileConfig.larkCli.identityPreset;
   const larkCliIdentityChanged = larkCliIdentity !== previousLarkCliIdentity;
+  const upgradeEnabled = parseYesNo(
+    fv.upgrade_enabled,
+    ctx.controls.profileConfig.upgrade.enabled,
+  );
+  const claudeModel =
+    ctx.controls.profileConfig.agentKind === 'claude'
+      ? Object.hasOwn(fv, 'claude_model')
+        ? normalizeClaudeModelInput(fv.claude_model)
+        : ctx.controls.profileConfig.claude?.model
+      : undefined;
 
   const formMsgId = ctx.msg.messageId;
   const access = ctx.controls.profileConfig.access;
@@ -2097,7 +2113,14 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
         larkCliPolicyApplied = true;
         failureStep = 'config.save';
       }
-      await savePreferencesConfig(ctx, nextPreferences, requireMentionInGroup, larkCliIdentity);
+      await savePreferencesConfig(
+        ctx,
+        nextPreferences,
+        requireMentionInGroup,
+        larkCliIdentity,
+        upgradeEnabled,
+        claudeModel,
+      );
     } catch (err) {
       let rollbackFailed = false;
       if (larkCliIdentityChanged) {
@@ -2128,6 +2151,8 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       runIdleTimeoutMinutes,
       requireMentionInGroup,
       larkCliIdentity,
+      upgradeEnabled,
+      claudeModel,
       allowedUsersCount: access.allowedUsers.length,
       allowedChatsCount: access.allowedChats.length,
       adminsCount: access.admins.length,
@@ -2143,6 +2168,8 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
         runIdleTimeoutMinutes,
         requireMentionInGroup,
         larkCliIdentity,
+        upgradeEnabled,
+        claudeModel,
         allowedUsers: access.allowedUsers,
         allowedChats: access.allowedChats,
         admins: access.admins,
@@ -2536,6 +2563,8 @@ async function savePreferencesConfig(
   preferences: AppPreferences,
   requireMentionInGroup: boolean,
   larkCliIdentity: ProfileConfig['larkCli']['identityPreset'],
+  upgradeEnabled: boolean,
+  claudeModel: string | undefined,
 ): Promise<void> {
   const larkCli = {
     identityPreset: larkCliIdentity,
@@ -2550,6 +2579,16 @@ async function savePreferencesConfig(
     if (!root) {
       ctx.controls.cfg.preferences = preferences;
       ctx.controls.profileConfig.larkCli = larkCli;
+      ctx.controls.profileConfig.upgrade = {
+        ...ctx.controls.profileConfig.upgrade,
+        enabled: upgradeEnabled,
+      };
+      if (ctx.controls.profileConfig.agentKind === 'claude') {
+        ctx.controls.profileConfig.claude = withClaudeModel(
+          ctx.controls.profileConfig.claude,
+          claudeModel,
+        );
+      }
       await saveConfig(ctx.controls.cfg, ctx.controls.configPath);
       return;
     }
@@ -2568,9 +2607,35 @@ async function savePreferencesConfig(
         requireMentionInGroup,
       },
       larkCli,
+      upgrade: {
+        ...profile.upgrade,
+        enabled: upgradeEnabled,
+      },
+      ...(profile.agentKind === 'claude'
+        ? { claude: withClaudeModel(profile.claude, claudeModel) }
+        : {}),
     };
     await saveRootConfig(root, ctx.controls.configPath);
     ctx.controls.profileConfig = root.profiles[ctx.controls.profile]!;
     ctx.controls.cfg = runtimeProfileConfig(root, ctx.controls.profile);
   });
+}
+
+function normalizeClaudeModelInput(input: unknown): string {
+  const model = String(input ?? '').trim();
+  if (/[\r\n]/.test(model)) throw new Error('claude_model 不能包含换行。');
+  return model;
+}
+
+function withClaudeModel(
+  current: ProfileConfig['claude'] | undefined,
+  model: string | undefined,
+): ProfileConfig['claude'] | undefined {
+  const nextModel = model?.trim();
+  const next = {
+    ...(current ?? {}),
+    ...(nextModel ? { model: nextModel } : {}),
+  };
+  if (!nextModel) delete next.model;
+  return Object.keys(next).length > 0 ? next : undefined;
 }

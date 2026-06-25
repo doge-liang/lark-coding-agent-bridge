@@ -100,9 +100,30 @@ describe('IM run flow', () => {
     expect(h.agent.runOptions[0]?.cwd).toBe(workspaceRealpath);
   });
 
+  it('passes the Claude profile model to the run executor', async () => {
+    const h = await createHarness({ defaultWorkspace: true, claudeModel: 'sonnet' });
+
+    const result = await startRunFlow({
+      scopeId: 'chat-1',
+      scope: { source: 'im', chatId: 'chat-1', actorId: 'ou_user' },
+      prompt: 'hello',
+      attachments: [],
+      access: { ok: true, reason: 'allowed-user' },
+      capability: claudeCapability(h.profileConfig),
+      profileConfig: h.profileConfig,
+      sessions: h.sessions,
+      workspaces: h.workspaces,
+      executor: h.executor,
+      now: 1000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(h.agent.runOptions[0]?.model).toBe('sonnet');
+  });
+
 });
 
-async function createHarness(options: { defaultWorkspace?: boolean } = {}): Promise<{
+async function createHarness(options: { defaultWorkspace?: boolean; claudeModel?: string } = {}): Promise<{
   tmp: TmpProfile;
   agent: FakeAgentAdapter;
   executor: RunExecutor;
@@ -131,6 +152,7 @@ async function createHarness(options: { defaultWorkspace?: boolean } = {}): Prom
       },
     },
   });
+  const claude = options.claudeModel ? { model: options.claudeModel } : undefined;
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   cleanups.push(async () => {
@@ -149,6 +171,7 @@ async function createHarness(options: { defaultWorkspace?: boolean } = {}): Prom
         ...profileConfig.workspaces,
         ...(options.defaultWorkspace ? { default: tmp.workspace } : {}),
       },
+      ...(claude ? { claude } : {}),
     },
   };
 }

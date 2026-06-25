@@ -10,6 +10,9 @@ export interface ConfigFormOpts {
   runIdleTimeoutMinutes: number;
   requireMentionInGroup: boolean;
   larkCliIdentity: LarkCliIdentityPreset;
+  upgradeEnabled: boolean;
+  /** Undefined means the active profile is not Claude. Empty string means Claude default. */
+  claudeModel?: string;
   allowedUsers: string[];
   allowedChats: string[];
   admins: string[];
@@ -199,6 +202,23 @@ export function configFormCard(opts: ConfigFormOpts): object {
                 { text: { tag: 'plain_text', content: '允许用户身份' }, value: 'user-default' },
               ],
             },
+            {
+              tag: 'markdown',
+              content:
+                '\n**受控自更新**\n' +
+                '_启用:管理员私聊可用 `/upgrade status/check/apply/rollback`_\n' +
+                '_关闭:`/upgrade` 会报告当前 profile 未启用升级_',
+            },
+            {
+              tag: 'select_static',
+              name: 'upgrade_enabled',
+              initial_option: opts.upgradeEnabled ? 'yes' : 'no',
+              options: [
+                { text: { tag: 'plain_text', content: '启用' }, value: 'yes' },
+                { text: { tag: 'plain_text', content: '关闭(默认)' }, value: 'no' },
+              ],
+            },
+            ...claudeModelElements(opts),
             { tag: 'hr' },
             collapsedAccessPanel('🔒 **访问控制**（点击展开）', accessElements),
             {
@@ -241,6 +261,25 @@ export function configFormCard(opts: ConfigFormOpts): object {
   };
 }
 
+function claudeModelElements(opts: ConfigFormOpts): object[] {
+  if (opts.claudeModel === undefined) return [];
+  return [
+    {
+      tag: 'markdown',
+      content:
+        '\n**Claude Code 模型**\n' +
+        '_留空:使用 Claude Code 默认配置;可填 alias,如 `sonnet` / `opus` / `fable`,或完整模型名_',
+    },
+    {
+      tag: 'input',
+      name: 'claude_model',
+      default_value: opts.claudeModel,
+      placeholder: { tag: 'plain_text', content: 'sonnet' },
+      input_type: 'text',
+    },
+  ];
+}
+
 export function configSavedCard(opts: ConfigFormOpts): object {
   const replyLabel =
     opts.messageReply === 'card'
@@ -265,6 +304,10 @@ export function configSavedCard(opts: ConfigFormOpts): object {
             `**run 探活**:\`${opts.runIdleTimeoutMinutes > 0 ? `${opts.runIdleTimeoutMinutes} 分钟` : '关闭'}\`\n` +
             `**群里需要 @ bot**:\`${opts.requireMentionInGroup ? '是' : '否'}\`\n\n` +
             `**lark-cli 身份策略**:\`${opts.larkCliIdentity === 'user-default' ? '允许用户身份' : '只允许应用身份'}\`\n\n` +
+            `**受控自更新**:\`${opts.upgradeEnabled ? '启用' : '关闭'}\`\n\n` +
+            (opts.claudeModel !== undefined
+              ? `**Claude Code 模型**:\`${opts.claudeModel || '默认'}\`\n\n`
+              : '') +
             '🔒 **访问控制**\n' +
             `**允许私聊的用户**:${summarize(opts.allowedUsers)}\n` +
             `**允许响应的群**:${summarize(opts.allowedChats)}\n` +

@@ -44,6 +44,10 @@ export interface CodexConfig {
   ignoreRules?: boolean;
 }
 
+export interface ClaudeConfig {
+  model?: string;
+}
+
 export interface AttachmentConfig {
   maxCount: number;
   maxBytes: number;
@@ -98,6 +102,7 @@ export interface ProfileConfig {
   sandbox: SandboxConfig;
   permissions: PermissionConfig;
   permissionSource?: PermissionSource;
+  claude?: ClaudeConfig;
   codex?: CodexConfig;
   attachments: AttachmentConfig;
   comments: CommentConfig;
@@ -159,6 +164,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     };
     sandbox?: Partial<SandboxConfig>;
     permissions?: Partial<PermissionConfig>;
+    claude?: ClaudeConfig;
     codex?: CodexConfig & { flags?: unknown };
     attachments?: Partial<AttachmentConfig>;
     comments?: unknown;
@@ -203,6 +209,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     sandbox,
     permissions,
     permissionSource,
+    ...(raw.agentKind === 'claude' && raw.claude ? { claude: normalizeClaude(raw.claude) } : {}),
     ...(raw.codex ? { codex: normalizeCodex(raw.codex) } : {}),
     attachments: {
       maxCount: numberOr(raw.attachments?.maxCount, 10),
@@ -216,6 +223,25 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     larkCli,
     upgrade,
   };
+}
+
+function normalizeClaude(input: unknown): ClaudeConfig {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('invalid claude config');
+  }
+  const raw = input as { model?: unknown };
+  const model = normalizeClaudeModel(raw.model);
+  return {
+    ...(model ? { model } : {}),
+  };
+}
+
+function normalizeClaudeModel(input: unknown): string | undefined {
+  if (input === undefined || input === null) return undefined;
+  const model = String(input).trim();
+  if (!model) return undefined;
+  if (/[\r\n]/.test(model)) throw new Error('claude.model 不能包含换行。');
+  return model;
 }
 
 function normalizeAccounts(input: unknown): ProfileConfig['accounts'] {
