@@ -133,10 +133,12 @@ export interface UsageCardInfo {
   sessionId: string;
   sampledAt?: string;
   context?: {
-    percent: string;
+    percent?: string;
+    label?: string;
     used: string;
-    window: string;
+    window?: string;
   };
+  note?: string;
   recent?: {
     total: string;
     input?: string;
@@ -160,11 +162,18 @@ export interface UsageCardInfo {
 export function usageCard(info: UsageCardInfo): object {
   const elements: object[] = [];
   if (info.context) {
+    const heading =
+      info.context.percent ?? info.context.label
+        ? `**当前上下文  ${escapeMd(info.context.percent ?? info.context.label ?? '')}**`
+        : '**当前上下文**';
+    const value = info.context.window
+      ? `\`${escapeCode(info.context.used)} / ${escapeCode(info.context.window)}\``
+      : `\`${escapeCode(info.context.used)}\``;
     elements.push(
       divMd(
         [
-          `**当前上下文  ${escapeMd(info.context.percent)}**`,
-          `\`${escapeCode(info.context.used)} / ${escapeCode(info.context.window)}\``,
+          heading,
+          value,
         ].join('\n'),
       ),
     );
@@ -192,7 +201,7 @@ export function usageCard(info: UsageCardInfo): object {
     divMd(
       [
         `session \`${escapeCode(info.sessionId)}\`${info.sampledAt ? ` · ${escapeMd(info.sampledAt)}` : ''}`,
-        '_当前上下文按最近一次 token_count 估算；累计消耗不是上下文长度。_',
+        `_${escapeMd(info.note ?? '当前上下文按最近一次 token_count 估算；累计消耗不是上下文长度。')}_`,
       ].join('\n'),
     ),
   );

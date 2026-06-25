@@ -949,7 +949,17 @@ function formatClaudeUsageCardInfo(sessionId: string, usage: SessionUsageSnapsho
     title: '📈 Claude 用量',
     sessionId: shortId(sessionId),
     ...(formatUsageTimestamp(usage.updatedAt) ? { sampledAt: formatUsageTimestamp(usage.updatedAt) } : {}),
+    ...(formatClaudeUsageContext(usage) ? { context: formatClaudeUsageContext(usage)! } : {}),
+    note: '当前上下文按最近一次 Claude usage 估算；缓存 token 表示模型读取的缓存上下文。',
     recent: formatUsageTokens(usage),
+  };
+}
+
+function formatClaudeUsageContext(usage: SessionUsageSnapshot): UsageCardInfo['context'] | undefined {
+  if (usage.totalTokens === undefined) return undefined;
+  return {
+    label: '估算',
+    used: formatNumber(usage.totalTokens),
   };
 }
 

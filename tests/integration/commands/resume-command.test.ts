@@ -313,12 +313,17 @@ describe('agent-aware resume commands', () => {
 
     const usage = lastContentString(h.channel);
     expect(usage).toContain('Claude 用量');
+    expect(usage).toContain('当前上下文');
+    expect(usage).toContain('估算');
+    expect(usage).not.toContain('暂无窗口快照');
     expect(usage).toContain('本轮 1,500');
     expect(usage).toContain('输入 1,000');
     expect(usage).toContain('缓存 200');
     expect(usage).toContain('输出 300');
     expect(usage).toContain('06-25 18:30 UTC');
     expect(usage).toContain('sess-cur');
+    expect(usage).toContain('Claude usage');
+    expect(usage).not.toContain('token_count');
     expect(usage).not.toContain('当前只支持 Codex');
     expect(usage).not.toContain('Codex 用量');
   });
