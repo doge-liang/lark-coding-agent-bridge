@@ -18,6 +18,7 @@ import { translateEvent } from './stream-json';
 export interface ClaudeAdapterOptions {
   binary?: string;
   larkChannel?: LarkChannelEnvContext;
+  env?: NodeJS.ProcessEnv;
 }
 
 type ClaudeChild = SpawnedProcessByStdio<null, Readable, Readable>;
@@ -28,11 +29,13 @@ export class ClaudeAdapter implements AgentAdapter {
 
   private readonly binary: string;
   private readonly larkChannel: LarkChannelEnvContext | undefined;
+  private readonly env: NodeJS.ProcessEnv;
   private botIdentity: AgentBotIdentity | undefined;
 
   constructor(opts: ClaudeAdapterOptions = {}) {
     this.binary = opts.binary ?? 'claude';
     this.larkChannel = opts.larkChannel;
+    this.env = opts.env ?? {};
   }
 
   setBotIdentity(identity: AgentBotIdentity): void {
@@ -73,7 +76,10 @@ export class ClaudeAdapter implements AgentAdapter {
 
     const child = spawnProcess(this.binary, args, {
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),
+      env: mergeProcessEnv(
+        process.env,
+        mergeProcessEnv(buildLarkChannelEnv(this.larkChannel), this.env),
+      ),
       stdio: ['ignore', 'pipe', 'pipe'],
     }) as ClaudeChild;
 

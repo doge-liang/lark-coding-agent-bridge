@@ -46,6 +46,7 @@ export interface CodexConfig {
 
 export interface ClaudeConfig {
   model?: string;
+  env?: Record<string, string>;
 }
 
 export interface AttachmentConfig {
@@ -230,10 +231,12 @@ function normalizeClaude(input: unknown): ClaudeConfig {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error('invalid claude config');
   }
-  const raw = input as { model?: unknown };
+  const raw = input as { model?: unknown; env?: unknown };
   const model = normalizeClaudeModel(raw.model);
+  const env = normalizeClaudeEnv(raw.env);
   return {
     ...(model ? { model } : {}),
+    ...(env ? { env } : {}),
   };
 }
 
@@ -243,6 +246,25 @@ function normalizeClaudeModel(input: unknown): string | undefined {
   if (!model) return undefined;
   if (/[\r\n]/.test(model)) throw new Error('claude.model 不能包含换行。');
   return model;
+}
+
+function normalizeClaudeEnv(input: unknown): Record<string, string> | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('invalid claude.env config');
+  }
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    const normalizedKey = key.trim();
+    if (!normalizedKey || /[\0=\r\n]/.test(normalizedKey)) {
+      throw new Error('invalid claude.env key');
+    }
+    if (value === undefined || value === null) continue;
+    const normalizedValue = String(value);
+    if (!normalizedValue) continue;
+    env[normalizedKey] = normalizedValue;
+  }
+  return Object.keys(env).length > 0 ? env : undefined;
 }
 
 function normalizeAccounts(input: unknown): ProfileConfig['accounts'] {

@@ -199,6 +199,33 @@ describe('profile schema', () => {
     expect(JSON.parse(text).profiles.claude.upgrade).toEqual(cfg.upgrade);
   });
 
+  it('normalizes and serializes Claude environment overrides', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      claude: {
+        model: 'opus',
+        env: {
+          IS_SANDBOX: '1',
+          EMPTY: '',
+          NUMBER: 1,
+        },
+      },
+    });
+
+    expect(cfg.claude).toEqual({
+      model: 'opus',
+      env: {
+        IS_SANDBOX: '1',
+        NUMBER: '1',
+      },
+    });
+
+    const text = formatRootConfig(createRootConfig('claude', cfg));
+    expect(JSON.parse(text).profiles.claude.claude).toEqual(cfg.claude);
+  });
+
   it('normalizes lark-cli user identity import state without preserving invalid fields', () => {
     const cfg = normalizeProfileConfig({
       schemaVersion: 2,

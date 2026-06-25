@@ -100,6 +100,29 @@ describe('ClaudeAdapter process contract', () => {
     });
   });
 
+  it('injects configured Claude environment variables into spawned runs', async () => {
+    const fake = await createFakeClaude({
+      lines: [{ type: 'result', session_id: 'sess-env' }],
+    });
+    cleanup.push(fake.dir);
+
+    const run = new ClaudeAdapter({
+      binary: fake.path,
+      env: {
+        IS_SANDBOX: '1',
+      },
+    }).run({
+      runId: 'run-env',
+      prompt: 'env',
+      cwd: fake.dir,
+    });
+
+    await collect(run.events);
+    const record = await readRecord(fake.recordPath);
+
+    expect(record.env.IS_SANDBOX).toBe('1');
+  });
+
   it('passes resume and model after the base CLI contract', async () => {
     const fake = await createFakeClaude({
       lines: [{ type: 'result', session_id: 'sess-resumed' }],
@@ -238,6 +261,7 @@ async function createFakeClaude(options: {
       '    LARK_CHANNEL_HOME: process.env.LARK_CHANNEL_HOME,',
       '    LARK_CHANNEL_CONFIG: process.env.LARK_CHANNEL_CONFIG,',
       '    LARKSUITE_CLI_CONFIG_DIR: process.env.LARKSUITE_CLI_CONFIG_DIR,',
+      '    IS_SANDBOX: process.env.IS_SANDBOX,',
       '  },',
       '}));',
       `const lines = ${JSON.stringify(options.lines)};`,
@@ -260,6 +284,7 @@ async function readRecord(path: string): Promise<{
     LARK_CHANNEL_HOME?: string;
     LARK_CHANNEL_CONFIG?: string;
     LARKSUITE_CLI_CONFIG_DIR?: string;
+    IS_SANDBOX?: string;
   };
 }> {
   return JSON.parse(await readFile(path, 'utf8')) as {
@@ -271,6 +296,7 @@ async function readRecord(path: string): Promise<{
       LARK_CHANNEL_HOME?: string;
       LARK_CHANNEL_CONFIG?: string;
       LARKSUITE_CLI_CONFIG_DIR?: string;
+      IS_SANDBOX?: string;
     };
   };
 }

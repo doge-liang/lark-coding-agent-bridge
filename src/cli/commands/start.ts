@@ -536,7 +536,10 @@ export function createRuntimeAgent(
       larkChannel,
     });
   }
-  return new ClaudeAdapter({ larkChannel });
+  return new ClaudeAdapter({
+    larkChannel,
+    ...(profileConfig.claude?.env ? { env: profileConfig.claude.env } : {}),
+  });
 }
 
 /**
