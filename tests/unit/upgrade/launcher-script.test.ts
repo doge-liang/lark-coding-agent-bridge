@@ -153,6 +153,97 @@ setInterval(() => {}, 1000);
       await rm(root, { recursive: true, force: true });
     }
   }, 10_000);
+
+  it('does not roll back when another activation process owns the profile lock', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'upgrade-launcher-lock-owner-'));
+    try {
+      const profile = 'codex-dev';
+      const upgradeRoot = join(root, 'profiles', profile, 'upgrades');
+      const newReleasePath = join(upgradeRoot, 'releases', 'new');
+      const oldReleasePath = join(upgradeRoot, 'releases', 'old');
+      const stateFile = join(upgradeRoot, 'state.json');
+      const launcherFile = join(upgradeRoot, 'launcher.mjs');
+      const pendingStartedAt = '2026-06-25T12:19:20.000Z';
+      await mkdir(join(newReleasePath, 'bin'), { recursive: true });
+      await mkdir(join(oldReleasePath, 'bin'), { recursive: true });
+      await writeFile(
+        join(newReleasePath, 'bin', 'lark-channel-bridge.mjs'),
+        `#!/usr/bin/env node
+console.error('runtime profile lock is already held by another activating bridge');
+process.exit(1);
+`,
+        { mode: 0o700 },
+      );
+      await writeFile(
+        join(oldReleasePath, 'bin', 'lark-channel-bridge.mjs'),
+        `#!/usr/bin/env node
+process.exit(0);
+`,
+        { mode: 0o700 },
+      );
+      await writeFile(
+        stateFile,
+        JSON.stringify(
+          {
+            current: { commit: 'new', path: newReleasePath },
+            previous: { commit: 'old', path: oldReleasePath },
+            pendingActivation: {
+              commit: 'new',
+              operationId: 'op-1',
+              startedAt: pendingStartedAt,
+              deadlineAt: new Date(Date.now() + 30_000).toISOString(),
+            },
+          },
+          null,
+          2,
+        ) + '\n',
+        { mode: 0o600 },
+      );
+      const profileLock = join(root, 'registry', 'locks', 'profile', `${profile}.lock`);
+      await mkdir(join(root, 'registry', 'locks', 'profile'), { recursive: true });
+      await writeFile(profileLock, '', { mode: 0o600 });
+      await writeFile(
+        `${profileLock}.meta.json`,
+        JSON.stringify(
+          {
+            kind: 'profile',
+            target: profileLock,
+            profile,
+            agentKind: 'codex',
+            pid: process.pid,
+            startedAt: '2026-06-25T12:19:24.000Z',
+          },
+          null,
+          2,
+        ) + '\n',
+        { mode: 0o600 },
+      );
+      await writeUpgradeLauncherScript(launcherFile, {
+        profile,
+        channelHome: root,
+        fallbackNodePath: process.execPath,
+        fallbackBridgeEntryPath: '/fallback/bridge.mjs',
+      });
+
+      const launcher = spawn(process.execPath, [launcherFile], {
+        env: { ...process.env, LARK_CHANNEL_HOME: root },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const result = await waitForExit(launcher);
+      expect(result).toEqual({ code: 0, signal: null });
+
+      const state = JSON.parse(await readFile(stateFile, 'utf8')) as {
+        current?: { commit?: string };
+        pendingActivation?: { commit?: string };
+        lastOperation?: { status?: string; stage?: string };
+      };
+      expect(state.current?.commit).toBe('new');
+      expect(state.pendingActivation?.commit).toBe('new');
+      expect(state.lastOperation).toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 10_000);
 });
 
 async function waitForFile(

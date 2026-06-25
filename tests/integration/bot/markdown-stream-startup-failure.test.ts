@@ -4,9 +4,14 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { log } from '../../../src/core/logger.js';
+import type { AgentEvent, AgentRunOptions } from '../../../src/agent/types.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
-import { FakeAgentAdapter, type FakeAgentEvents } from '../../helpers/fake-agent.js';
+import {
+  FakeAgentAdapter,
+  type FakeAgentEvents,
+  type FakeAgentRun,
+} from '../../helpers/fake-agent.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
 
 const sdkMock = vi.hoisted(() => ({
@@ -79,6 +84,17 @@ afterEach(async () => {
 });
 
 describe('markdown stream startup failures', () => {
+  it('delegates automatic keepalive to the SDK WebSocket reconnect path', async () => {
+    const h = await createHarness();
+    await startTestBridge(h);
+
+    const opts = (sdkMock.createLarkChannel.mock.calls as unknown[][])[0]?.[0] as
+      | { keepalive?: { enabled?: boolean; onUnrecoverable?: unknown } }
+      | undefined;
+    expect(opts?.keepalive?.enabled).toBe(true);
+    expect(opts?.keepalive?.onUnrecoverable).toBeTypeOf('function');
+  });
+
   it('does not leave the IM queue blocked when the agent exits before stream producer starts', async () => {
     const h = await createHarness();
     await startTestBridge(h);
@@ -192,6 +208,42 @@ describe('markdown stream startup failures', () => {
     expect(card).toContain('已完成');
     expect(card).not.toContain('正在调用工具');
   }, 10_000);
+
+  it('marks the card interrupted promptly when a silent tool run is stopped', async () => {
+    const updates: unknown[] = [];
+    let producerStarted = false;
+    const h = await createHarness({
+      messageReply: 'card',
+      agent: new HangingToolAgentAdapter(),
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          card?: {
+            producer: (ctrl: {
+              update(next: object | ((current: object) => object)): Promise<void>;
+            }) => Promise<void>;
+          };
+        }).card?.producer;
+        if (!producer) throw new Error('expected card stream input');
+        producerStarted = true;
+        await producer({
+          update: async (card: unknown): Promise<void> => {
+            updates.push(card);
+          },
+        });
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_first', 'run a long tool'));
+    await waitFor(() => producerStarted && JSON.stringify(updates.at(-1)).includes('正在调用工具'));
+
+    await h.channel.handlers.message?.(message('om_stop', '/stop'));
+
+    await waitFor(() => JSON.stringify(updates.at(-1)).includes('已被中断'), 1000);
+    const finalCard = JSON.stringify(updates.at(-1));
+    expect(finalCard).toContain('"streaming_mode":false');
+    expect(finalCard).not.toContain('正在调用工具');
+  });
 });
 
 async function createHarness(options: {
@@ -199,6 +251,7 @@ async function createHarness(options: {
   stream?: StreamFn;
   messageReply?: 'markdown' | 'card' | 'text';
   agentEvents?: FakeAgentEvents;
+  agent?: FakeAgentAdapter;
 } = {}): Promise<{
   tmp: TmpProfile;
   channel: FakeLarkChannel;
@@ -241,7 +294,7 @@ async function createHarness(options: {
   };
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
-  const agent = new FakeAgentAdapter({
+  const agent = options.agent ?? new FakeAgentAdapter({
     id: 'codex',
     displayName: 'Codex',
     events: options.agentEvents ?? [
@@ -354,6 +407,52 @@ function createFakeLarkChannel(options: {
     },
   };
   return channel;
+}
+
+class HangingToolAgentAdapter extends FakeAgentAdapter {
+  override run(opts: AgentRunOptions): FakeAgentRun {
+    this.runOptions.push(opts);
+    const run = new HangingToolRun(opts);
+    this.runs.push(run);
+    return run;
+  }
+}
+
+class HangingToolRun implements FakeAgentRun {
+  readonly runId: string;
+  readonly opts: AgentRunOptions;
+  readonly events: AsyncIterable<AgentEvent>;
+  readonly waitForExitResult = false;
+  #stopped = false;
+  #waitForExitCalls = 0;
+
+  constructor(opts: AgentRunOptions) {
+    this.runId = opts.runId;
+    this.opts = opts;
+    this.events = this.iterate();
+  }
+
+  get stopped(): boolean {
+    return this.#stopped;
+  }
+
+  get waitForExitCalls(): number {
+    return this.#waitForExitCalls;
+  }
+
+  async stop(): Promise<void> {
+    this.#stopped = true;
+  }
+
+  async waitForExit(): Promise<boolean> {
+    this.#waitForExitCalls++;
+    return this.#stopped;
+  }
+
+  private async *iterate(): AsyncIterable<AgentEvent> {
+    yield { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'sleep 600' } };
+    await new Promise<void>(() => {});
+  }
 }
 
 function deferred<T>(): {

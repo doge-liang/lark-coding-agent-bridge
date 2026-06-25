@@ -127,6 +127,36 @@ function childExitMessage(result, stderrTail) {
   return parts.join('; ');
 }
 
+function readProfileRuntimeLockMeta() {
+  const metaFile = join(CHANNEL_HOME, 'registry', 'locks', 'profile', PROFILE + '.lock.meta.json');
+  try {
+    return JSON.parse(readFileSync(metaFile, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+function isPidAlive(pid) {
+  if (typeof pid !== 'number' || !Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err && err.code === 'EPERM';
+  }
+}
+
+function activationOwnedByAnotherProcess(pendingActivation, childPid) {
+  const meta = readProfileRuntimeLockMeta();
+  if (!meta || meta.kind !== 'profile' || meta.profile !== PROFILE) return false;
+  if (typeof meta.pid !== 'number' || meta.pid === process.pid || meta.pid === childPid) return false;
+  const pendingStarted = Date.parse(pendingActivation.startedAt);
+  const holderStarted = Date.parse(meta.startedAt);
+  if (!Number.isFinite(pendingStarted) || !Number.isFinite(holderStarted)) return false;
+  if (holderStarted < pendingStarted) return false;
+  return isPidAlive(meta.pid);
+}
+
 function waitForChildExit(child) {
   return new Promise((resolve) => {
     let settled = false;
@@ -202,6 +232,12 @@ async function runOnce() {
   if (rolledBackForTimeout) return 'retry';
   const latest = readState();
   if (pendingActivation && latest.pendingActivation) {
+    if (activationOwnedByAnotherProcess(latest.pendingActivation, child.pid)) {
+      process.stderr.write(
+        '[upgrade] pending activation is owned by another live bridge process; leaving state unchanged\\n',
+      );
+      return 'handoff';
+    }
     const rollbackResult = rollbackState(latest, childExitMessage(childResult, stderrTail));
     if (rollbackResult.rolledBack) return 'retry';
     process.exit(1);

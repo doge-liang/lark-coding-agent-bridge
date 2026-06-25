@@ -56,7 +56,6 @@ import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, startRunFlow } from './run-flow';
 import { commandSessionCatalogIdentity } from './session-catalog-identity';
-import { startKeepalive } from './keepalive';
 import { PendingQueue } from './pending-queue';
 import { ProcessPool } from './process-pool';
 import { fetchQuotedContext, type QuotedContext } from './quote';
@@ -67,6 +66,7 @@ import type { AppPaths } from '../config/app-paths';
 const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
+const INTERRUPT_POLL_MS = 100;
 
 const BRIDGE_AGENT_INSTRUCTIONS = [
   '你在 bridge 进程中运行，普通 lark-cli 会继承 LARK_CHANNEL=1 并进入 bridge-bound 模式。',
@@ -237,6 +237,19 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     httpTimeoutMs: 30_000,
     // Route WS + REST through HTTPS_PROXY / HTTP_PROXY when set (no-op otherwise).
     respectProxyEnv: true,
+    // Let @larksuite/channel repair stale WebSocket state in place. This is
+    // intentionally lighter than a full bridge restart: active agent runs and
+    // their card streams should survive a routine WS reconnect.
+    keepalive: {
+      enabled: true,
+      onUnrecoverable: (err: unknown) => {
+        log.fail('keepalive', err, { step: 'sdk-unrecoverable' });
+        reportMetric('ws_reconnect', 1, { kind: 'keepalive-unrecoverable' });
+        void controls.restart().catch((restartErr) => {
+          log.fail('keepalive', restartErr, { step: 'sdk-unrecoverable-restart' });
+        });
+      },
+    },
   };
 
   const channel = createLarkChannel(opts);
@@ -401,26 +414,12 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   });
   console.log('正在监听消息。按 Ctrl+C 退出。\n');
 
-  // App-level keepalive: 15s probe + wake-up detection + HTTP reachability.
-  // Defense-in-depth — the SDK's pingTimeout watchdog handles half-dead WS,
-  // this catches anything that the SDK misses (silent state stuck, etc.).
-  const probeDomain =
-    cfg.accounts.app.tenant === 'lark'
-      ? 'https://open.larksuite.com'
-      : 'https://open.feishu.cn';
-  const keepalive = startKeepalive({
-    channel,
-    domain: probeDomain,
-    forceReconnect: () => controls.restart(),
-  });
-
   return {
     channel,
     disconnect: async () => {
       activeRuns.pauseNewRuns('bridge-disconnect');
       ownerRefresh.stop();
       knownChatsRefresh.stop();
-      keepalive.stop();
       pending.cancelAll();
       const [disconnectResult, stopAllResult, ...flushResults] = await Promise.allSettled([
         channel.disconnect(),
@@ -962,9 +961,12 @@ async function processAgentStream(
   };
   armOrPauseIdle();
 
+  const iterator = events[Symbol.asyncIterator]();
   try {
-    for await (const evt of events) {
-      if (handle.interrupted) break;
+    while (!handle.interrupted) {
+      const next = await nextEventOrInterrupt(iterator, handle);
+      if (next === INTERRUPTED || next.done) break;
+      const evt = next.value;
 
       // Track tool flight before re-arming the idle timer so the arm step
       // sees the correct set size. tool_use opens a window; tool_result
@@ -1036,6 +1038,31 @@ async function processAgentStream(
     await handle.run.stop();
   }
   return state;
+}
+
+const INTERRUPTED = Symbol('interrupted');
+
+async function nextEventOrInterrupt<T>(
+  iterator: AsyncIterator<T>,
+  handle: RunHandle,
+): Promise<IteratorResult<T> | typeof INTERRUPTED> {
+  if (handle.interrupted) return INTERRUPTED;
+
+  let timer: NodeJS.Timeout | undefined;
+  const interrupted = new Promise<typeof INTERRUPTED>((resolve) => {
+    const poll = (): void => {
+      if (handle.interrupted) {
+        resolve(INTERRUPTED);
+        return;
+      }
+      timer = setTimeout(poll, INTERRUPT_POLL_MS);
+    };
+    timer = setTimeout(poll, INTERRUPT_POLL_MS);
+  });
+
+  const result = await Promise.race([iterator.next(), interrupted]);
+  if (timer) clearTimeout(timer);
+  return result;
 }
 
 async function awaitRenderAwareStream(input: {
