@@ -1119,15 +1119,13 @@ async function awaitRenderAwareStream(input: {
         log.fail('stream', result.err, { mode: input.mode, step: 'stream-terminal-late' });
       }
     });
-    // Card stream updates are throttled inside @larksuite/channel: ctrl.update()
-    // returns after updating local state, while the final PATCH happens when
-    // the stream completes. If that PATCH stalls past the grace window, the
-    // visible card can remain on the previous "running/tool" footer. Send a
-    // terminal fallback card so users see the finished state even if the
-    // original stream transport is slow or stuck.
-    if (input.mode === 'card') {
-      await runFallbackReply(input.mode, first.state, input.fallback);
-    }
+    // Stream updates are throttled inside @larksuite/channel: controller calls
+    // return after updating local state, while the final PATCH happens when the
+    // stream completes. If that PATCH stalls past the grace window, the visible
+    // message can remain on the previous "running/tool" footer. Send a
+    // terminal fallback so users see the finished state even if the original
+    // stream transport is slow or stuck.
+    await runFallbackReply(input.mode, first.state, input.fallback);
     return;
   }
   if (!terminal.ok) throw terminal.err;

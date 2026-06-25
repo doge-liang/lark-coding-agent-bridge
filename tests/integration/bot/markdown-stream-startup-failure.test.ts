@@ -258,6 +258,45 @@ describe('markdown stream startup failures', () => {
     expect(card).not.toContain('正在调用工具');
   }, 10_000);
 
+  it('sends a terminal fallback markdown when markdown stream transport stalls after render completes', async () => {
+    const streamNeverFinishes = deferred<void>();
+    let producerCompleted = false;
+    const markdownUpdates: string[] = [];
+    const h = await createHarness({
+      agentEvents: [
+        [
+          { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'pwd' } },
+          { type: 'tool_result', id: 'tool-1', output: '/repo', isError: false },
+          { type: 'text', delta: '最终结果应该补发。' },
+          { type: 'done', terminationReason: 'normal' },
+        ],
+      ],
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          markdown?: (ctrl: { setContent(markdown: string): Promise<void> }) => Promise<void>;
+        }).markdown;
+        if (!producer) throw new Error('expected markdown stream input');
+        await producer({
+          setContent: async (markdown: string): Promise<void> => {
+            markdownUpdates.push(markdown);
+          },
+        });
+        producerCompleted = true;
+        await streamNeverFinishes.promise;
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_first', 'first'));
+
+    await waitFor(() => producerCompleted);
+    await waitFor(() => h.channel.sent.length > 0, 4500);
+    const markdown = lastMarkdown(h.channel);
+    expect(markdown).toContain('最终结果应该补发');
+    expect(markdown).not.toContain('正在调用工具');
+    expect(markdownUpdates.at(-1)).toContain('最终结果应该补发');
+  }, 10_000);
+
   it('marks the card interrupted promptly when a silent tool run is stopped', async () => {
     const updates: unknown[] = [];
     let producerStarted = false;
