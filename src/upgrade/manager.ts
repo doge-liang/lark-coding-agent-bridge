@@ -1,5 +1,5 @@
-import { appendFile, mkdir, rename, rm } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { appendFile, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { AppPaths } from '../config/app-paths';
 import type { ProfileConfig } from '../config/profile-schema';
 import type { ServiceResult } from '../daemon/service-adapter';
@@ -298,26 +298,28 @@ export class UpgradeManager {
   private async fetchAndResolve(remote: string, branch: string, logPath?: string): Promise<string> {
     assertSafeGitName(remote, 'remote');
     assertSafeGitName(branch, 'branch');
+    const sourcePath = await this.resolveGitSourcePath();
     await this.runChecked(
       'fetch',
       'git',
-      ['-C', this.options.currentPath, 'fetch', remote, `refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
+      ['-C', sourcePath, 'fetch', remote, `refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
       { logPath },
     );
     const resolved = await this.runChecked(
       'resolve',
       'git',
-      ['-C', this.options.currentPath, 'rev-parse', `refs/remotes/${remote}/${branch}`],
+      ['-C', sourcePath, 'rev-parse', `refs/remotes/${remote}/${branch}`],
       { logPath },
     );
     return resolved.stdout.trim();
   }
 
   private async readCommitMetadata(commit: string): Promise<{ title?: string; author?: string; committedAt?: string }> {
+    const sourcePath = await this.resolveGitSourcePath();
     const shown = await this.runChecked(
       'metadata',
       'git',
-      ['-C', this.options.currentPath, 'show', '-s', '--format=%s%n%an%n%cI', commit],
+      ['-C', sourcePath, 'show', '-s', '--format=%s%n%an%n%cI', commit],
     );
     const [title, author, committedAt] = shown.stdout.replace(/\r\n/g, '\n').split('\n');
     return {
@@ -328,15 +330,43 @@ export class UpgradeManager {
   }
 
   private async remoteUrl(remote: string, logPath: string): Promise<string> {
+    const sourcePath = await this.resolveGitSourcePath();
     const result = await this.runChecked(
       'source',
       'git',
-      ['-C', this.options.currentPath, 'config', '--get', `remote.${remote}.url`],
+      ['-C', sourcePath, 'config', '--get', `remote.${remote}.url`],
       { logPath },
     );
     const remoteUrl = result.stdout.trim();
     if (!remoteUrl) throw new UpgradeCommandError('source', `remote ${remote} has no configured URL`);
     return remoteUrl;
+  }
+
+  private async resolveGitSourcePath(): Promise<string> {
+    for (const candidate of await this.gitSourceCandidates()) {
+      if (await hasGitMetadata(candidate)) return candidate;
+    }
+    throw new UpgradeCommandError('source', 'no git repository found for upgrade source');
+  }
+
+  private async gitSourceCandidates(): Promise<string[]> {
+    const state = await loadUpgradeState(this.paths.stateFile);
+    const releaseCandidates = await this.releaseSourceCandidates();
+    return uniquePaths([
+      this.options.currentPath,
+      state.current?.path,
+      state.previous?.path,
+      ...releaseCandidates,
+    ]);
+  }
+
+  private async releaseSourceCandidates(): Promise<string[]> {
+    try {
+      const entries = await readdir(this.paths.releasesDir, { withFileTypes: true });
+      return entries.filter((entry) => entry.isDirectory()).map((entry) => join(this.paths.releasesDir, entry.name));
+    } catch {
+      return [];
+    }
   }
 
   private async verify(staging: string, logPath: string): Promise<{ stage: string; message: string } | undefined> {
@@ -429,6 +459,26 @@ class UpgradeCommandError extends Error {
 
 function defaultOperationId(): string {
   return `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function hasGitMetadata(path: string): Promise<boolean> {
+  try {
+    await stat(join(path, '.git'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function uniquePaths(paths: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const path of paths) {
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    result.push(path);
+  }
+  return result;
 }
 
 function assertSafeGitName(value: string, label: string): void {

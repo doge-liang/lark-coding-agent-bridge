@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -48,6 +48,41 @@ describe('UpgradeManager', () => {
       'origin',
       'refs/heads/release:refs/remotes/origin/release',
     ]);
+  });
+
+  it('checks from a git-backed previous release when the current runtime release has no git metadata', async () => {
+    const h = await harness({ enabled: true, currentHasGit: false });
+    const sourceRelease = join(h.root, 'profiles', 'claude', 'upgrades', 'releases', 'source-release');
+    await mkdir(join(sourceRelease, '.git'), { recursive: true });
+    await saveUpgradeState(h.paths.stateFile, {
+      current: { commit: 'packaged', path: h.currentPath },
+      previous: { commit: 'source', path: sourceRelease },
+    });
+    h.run.mockResolvedValueOnce({ ok: true, stdout: '', stderr: '' });
+    h.run.mockResolvedValueOnce({ ok: true, stdout: 'abc123\n', stderr: '' });
+    h.run.mockResolvedValueOnce({
+      ok: true,
+      stdout: 'Update title\nAlice\n2026-06-20T00:00:00.000Z\n',
+      stderr: '',
+    });
+
+    const result = await h.manager.check();
+
+    expect(result.status).toBe('update');
+    expect(h.run.mock.calls[0]?.[1]).toEqual([
+      '-C',
+      sourceRelease,
+      'fetch',
+      'origin',
+      'refs/heads/release:refs/remotes/origin/release',
+    ]);
+    expect(h.run.mock.calls[1]?.[1]).toEqual([
+      '-C',
+      sourceRelease,
+      'rev-parse',
+      'refs/remotes/origin/release',
+    ]);
+    expect(h.run.mock.calls[2]?.[1]?.slice(0, 2)).toEqual(['-C', sourceRelease]);
   });
 
   it('does not switch current when verification fails', async () => {
@@ -260,6 +295,7 @@ describe('runUpgradeCommand', () => {
 async function harness(
   overrides: Partial<ReturnType<typeof createDefaultProfileConfig>['upgrade']> & {
     activationNotify?: { chatId: string; messageId?: string };
+    currentHasGit?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'upgrade-manager-'));
@@ -273,7 +309,8 @@ async function harness(
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
   });
-  const { activationNotify, ...upgradeOverrides } = overrides;
+  const { activationNotify, currentHasGit = true, ...upgradeOverrides } = overrides;
+  if (currentHasGit) await mkdir(join(currentPath, '.git'), { recursive: true });
   profileConfig.upgrade = { ...profileConfig.upgrade, ...upgradeOverrides };
   const paths = resolveUpgradePaths(appPaths);
   const run = vi.fn();
