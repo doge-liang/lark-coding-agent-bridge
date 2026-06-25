@@ -47,6 +47,7 @@ export interface UpgradeManagerOptions {
 export interface UpgradeStatus {
   enabled: boolean;
   remote: string;
+  sourceUrl?: string;
   branch: string;
   requireTests: boolean;
   healthTimeoutMs: number;
@@ -100,6 +101,7 @@ export class UpgradeManager {
     return {
       enabled: upgrade.enabled,
       remote: upgrade.remote,
+      ...(upgrade.sourceUrl ? { sourceUrl: upgrade.sourceUrl } : {}),
       branch: upgrade.branch,
       requireTests: upgrade.requireTests,
       healthTimeoutMs: upgrade.healthTimeoutMs,
@@ -112,7 +114,7 @@ export class UpgradeManager {
     if (!base.enabled) return { ...base, status: 'disabled' };
 
     try {
-      const targetCommit = await this.fetchAndResolve(base.remote, base.branch);
+      const targetCommit = await this.resolveTargetCommit(base.remote, base.branch);
       const state = await loadUpgradeState(this.paths.stateFile);
       const currentCommit = state.current?.commit;
       const metadata = await this.readCommitMetadata(targetCommit);
@@ -161,7 +163,7 @@ export class UpgradeManager {
 
       try {
         const { remote, branch } = this.options.profileConfig.upgrade;
-        const targetCommit = await this.fetchAndResolve(remote, branch, logPath);
+        const targetCommit = await this.resolveTargetCommit(remote, branch, logPath);
         const stateBeforeSwitch = await loadUpgradeState(this.paths.stateFile);
         if (stateBeforeSwitch.current?.commit === targetCommit) {
           await rm(staging, { recursive: true, force: true });
@@ -295,6 +297,20 @@ export class UpgradeManager {
     return { status: 'ok', currentCommit: switched.currentCommit };
   }
 
+  private async resolveTargetCommit(remote: string, branch: string, logPath?: string): Promise<string> {
+    const sourceUrl = this.options.profileConfig.upgrade.sourceUrl;
+    if (sourceUrl) return this.resolveRemoteHead(sourceUrl, branch, logPath);
+    return this.fetchAndResolve(remote, branch, logPath);
+  }
+
+  private async resolveRemoteHead(sourceUrl: string, branch: string, logPath?: string): Promise<string> {
+    assertSafeGitName(branch, 'branch');
+    const resolved = await this.runChecked('fetch', 'git', ['ls-remote', sourceUrl, `refs/heads/${branch}`], {
+      logPath,
+    });
+    return parseLsRemoteBranch(resolved.stdout, branch);
+  }
+
   private async fetchAndResolve(remote: string, branch: string, logPath?: string): Promise<string> {
     assertSafeGitName(remote, 'remote');
     assertSafeGitName(branch, 'branch');
@@ -315,6 +331,7 @@ export class UpgradeManager {
   }
 
   private async readCommitMetadata(commit: string): Promise<{ title?: string; author?: string; committedAt?: string }> {
+    if (this.options.profileConfig.upgrade.sourceUrl) return {};
     const sourcePath = await this.resolveGitSourcePath();
     const shown = await this.runChecked(
       'metadata',
@@ -330,6 +347,8 @@ export class UpgradeManager {
   }
 
   private async remoteUrl(remote: string, logPath: string): Promise<string> {
+    const configured = this.options.profileConfig.upgrade.sourceUrl;
+    if (configured) return configured;
     const sourcePath = await this.resolveGitSourcePath();
     const result = await this.runChecked(
       'source',
@@ -479,6 +498,18 @@ function uniquePaths(paths: Array<string | undefined>): string[] {
     result.push(path);
   }
   return result;
+}
+
+function parseLsRemoteBranch(stdout: string, branch: string): string {
+  const [line] = stdout.trim().split(/\r?\n/);
+  const [commit, ref] = line?.trim().split(/\s+/, 2) ?? [];
+  if (ref !== `refs/heads/${branch}` || !commit) {
+    throw new UpgradeCommandError('fetch', `branch ${branch} not found in upgrade source`);
+  }
+  if (!/^[0-9a-f]{40}$/i.test(commit)) {
+    throw new UpgradeCommandError('fetch', `invalid commit for upgrade branch ${branch}`);
+  }
+  return commit;
 }
 
 function assertSafeGitName(value: string, label: string): void {

@@ -1973,6 +1973,7 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     requireMentionInGroup: getRequireMentionInGroup(ctx.controls.cfg),
     larkCliIdentity: ctx.controls.profileConfig.larkCli.identityPreset,
     upgradeEnabled: ctx.controls.profileConfig.upgrade.enabled,
+    upgradeSourceUrl: ctx.controls.profileConfig.upgrade.sourceUrl,
     claudeModel:
       ctx.controls.profileConfig.agentKind === 'claude'
         ? (ctx.controls.profileConfig.claude?.model ?? '')
@@ -2065,6 +2066,9 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
     fv.upgrade_enabled,
     ctx.controls.profileConfig.upgrade.enabled,
   );
+  const upgradeSourceUrl = Object.hasOwn(fv, 'upgrade_source_url')
+    ? normalizeUpgradeSourceUrlInput(fv.upgrade_source_url)
+    : ctx.controls.profileConfig.upgrade.sourceUrl;
   const claudeModel =
     ctx.controls.profileConfig.agentKind === 'claude'
       ? Object.hasOwn(fv, 'claude_model')
@@ -2119,6 +2123,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
         requireMentionInGroup,
         larkCliIdentity,
         upgradeEnabled,
+        upgradeSourceUrl,
         claudeModel,
       );
     } catch (err) {
@@ -2152,6 +2157,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       requireMentionInGroup,
       larkCliIdentity,
       upgradeEnabled,
+      upgradeSourceUrl,
       claudeModel,
       allowedUsersCount: access.allowedUsers.length,
       allowedChatsCount: access.allowedChats.length,
@@ -2169,6 +2175,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
         requireMentionInGroup,
         larkCliIdentity,
         upgradeEnabled,
+        upgradeSourceUrl,
         claudeModel,
         allowedUsers: access.allowedUsers,
         allowedChats: access.allowedChats,
@@ -2564,6 +2571,7 @@ async function savePreferencesConfig(
   requireMentionInGroup: boolean,
   larkCliIdentity: ProfileConfig['larkCli']['identityPreset'],
   upgradeEnabled: boolean,
+  upgradeSourceUrl: string | undefined,
   claudeModel: string | undefined,
 ): Promise<void> {
   const larkCli = {
@@ -2580,7 +2588,7 @@ async function savePreferencesConfig(
       ctx.controls.cfg.preferences = preferences;
       ctx.controls.profileConfig.larkCli = larkCli;
       ctx.controls.profileConfig.upgrade = {
-        ...ctx.controls.profileConfig.upgrade,
+        ...withUpgradeSourceUrl(ctx.controls.profileConfig.upgrade, upgradeSourceUrl),
         enabled: upgradeEnabled,
       };
       if (ctx.controls.profileConfig.agentKind === 'claude') {
@@ -2608,7 +2616,7 @@ async function savePreferencesConfig(
       },
       larkCli,
       upgrade: {
-        ...profile.upgrade,
+        ...withUpgradeSourceUrl(profile.upgrade, upgradeSourceUrl),
         enabled: upgradeEnabled,
       },
       ...(profile.agentKind === 'claude'
@@ -2625,6 +2633,21 @@ function normalizeClaudeModelInput(input: unknown): string {
   const model = String(input ?? '').trim();
   if (/[\r\n]/.test(model)) throw new Error('claude_model 不能包含换行。');
   return model;
+}
+
+function normalizeUpgradeSourceUrlInput(input: unknown): string | undefined {
+  const sourceUrl = String(input ?? '').trim();
+  if (!sourceUrl) return undefined;
+  if (/[\r\n]/.test(sourceUrl)) throw new Error('upgrade_source_url 不能包含换行。');
+  return sourceUrl;
+}
+
+function withUpgradeSourceUrl(
+  upgrade: ProfileConfig['upgrade'],
+  sourceUrl: string | undefined,
+): ProfileConfig['upgrade'] {
+  const { sourceUrl: _sourceUrl, ...rest } = upgrade;
+  return sourceUrl ? { ...rest, sourceUrl } : rest;
 }
 
 function withClaudeModel(

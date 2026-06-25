@@ -81,6 +81,7 @@ export interface LarkCliConfig {
 export interface UpgradeConfig {
   enabled: boolean;
   remote: string;
+  sourceUrl?: string;
   branch: string;
   requireTests: boolean;
   healthTimeoutMs: number;
@@ -351,10 +352,12 @@ function normalizeUpgrade(input: unknown): UpgradeConfig {
   }
   const raw = input as Record<string, unknown>;
   const remote = nonEmptyString(raw.remote, 'origin');
+  const sourceUrl = optionalUpgradeSourceUrl(raw.sourceUrl ?? raw.remoteUrl);
   const branch = nonEmptyString(raw.branch, 'release');
   return {
     enabled: raw.enabled === true,
     remote,
+    ...(sourceUrl ? { sourceUrl } : {}),
     branch,
     requireTests: raw.requireTests === true,
     healthTimeoutMs: positiveInt(raw.healthTimeoutMs, 60_000),
@@ -371,6 +374,14 @@ function defaultUpgradeConfig(): UpgradeConfig {
     healthTimeoutMs: 60_000,
     retainReleases: 3,
   };
+}
+
+function optionalUpgradeSourceUrl(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const sourceUrl = String(value).trim();
+  if (!sourceUrl) return undefined;
+  if (/[\r\n]/.test(sourceUrl)) throw new Error('upgrade.sourceUrl 不能包含换行。');
+  return sourceUrl;
 }
 
 function nonEmptyString(value: unknown, fallback: string): string {

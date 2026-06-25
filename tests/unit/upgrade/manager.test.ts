@@ -85,6 +85,48 @@ describe('UpgradeManager', () => {
     expect(h.run.mock.calls[2]?.[1]?.slice(0, 2)).toEqual(['-C', sourceRelease]);
   });
 
+  it('checks the configured source URL without requiring the current runtime path to be a git repository', async () => {
+    const target = 'a'.repeat(40);
+    const sourceUrl = 'https://github.com/example/lark-channel-bridge.git';
+    const h = await harness({ enabled: true, currentHasGit: false, sourceUrl } as Parameters<typeof harness>[0]);
+    h.run.mockResolvedValueOnce({ ok: true, stdout: `${target}\trefs/heads/release\n`, stderr: '' });
+
+    const result = await h.manager.check();
+
+    expect(result.status).toBe('update');
+    if (result.status !== 'update') throw new Error(`expected update, got ${result.status}`);
+    expect(result.targetCommit).toBe(target);
+    expect(h.run).toHaveBeenCalledTimes(1);
+    expect(h.run.mock.calls[0]?.[1]).toEqual(['ls-remote', sourceUrl, 'refs/heads/release']);
+  });
+
+  it('applies by cloning the configured source URL without requiring the current runtime path to be a git repository', async () => {
+    const target = 'b'.repeat(40);
+    const sourceUrl = 'https://github.com/example/lark-channel-bridge.git';
+    const h = await harness({ enabled: true, currentHasGit: false, sourceUrl } as Parameters<typeof harness>[0]);
+    await saveUpgradeState(h.paths.stateFile, {
+      current: { commit: 'old', path: h.currentPath },
+    });
+    h.run
+      .mockResolvedValueOnce({ ok: true, stdout: `${target}\trefs/heads/release\n`, stderr: '' })
+      .mockResolvedValueOnce({ ok: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ ok: true, stdout: `${target}\n`, stderr: '' })
+      .mockResolvedValue({ ok: true, stdout: '', stderr: '' });
+    h.restart.mockResolvedValue({ ok: true, stderr: '' });
+
+    const result = await h.manager.apply();
+
+    expect(result.status).toBe('ok');
+    expect(h.run.mock.calls[0]?.[1]).toEqual(['ls-remote', sourceUrl, 'refs/heads/release']);
+    expect(h.run.mock.calls[1]?.[1]?.slice(0, 5)).toEqual([
+      'clone',
+      '--branch',
+      'release',
+      '--single-branch',
+      sourceUrl,
+    ]);
+  });
+
   it('does not switch current when verification fails', async () => {
     const h = await harness({ enabled: true });
     await saveUpgradeState(h.paths.stateFile, {

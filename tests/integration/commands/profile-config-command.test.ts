@@ -78,6 +78,8 @@ describe('profile-aware account and config commands', () => {
     const card = lastContent(h);
     expect(card).toContain('claude_model');
     expect(card).toContain('Claude Code 模型');
+    expect(card).toContain('upgrade_source_url');
+    expect(card).toContain('升级源 URL');
   });
 
   it('saves /codex-config submit into the active Codex profile', async () => {
@@ -156,6 +158,7 @@ describe('profile-aware account and config commands', () => {
       require_mention_in_group: 'no',
       lark_cli_identity: 'user-default',
       upgrade_enabled: 'yes',
+      upgrade_source_url: 'https://github.com/example/lark-channel-bridge.git',
       claude_model: 'sonnet',
     });
 
@@ -179,6 +182,7 @@ describe('profile-aware account and config commands', () => {
     expect(root.profiles.claude?.upgrade).toMatchObject({
       enabled: true,
       remote: 'origin',
+      sourceUrl: 'https://github.com/example/lark-channel-bridge.git',
       branch: 'release',
       requireTests: false,
       healthTimeoutMs: 60_000,

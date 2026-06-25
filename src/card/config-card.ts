@@ -11,6 +11,7 @@ export interface ConfigFormOpts {
   requireMentionInGroup: boolean;
   larkCliIdentity: LarkCliIdentityPreset;
   upgradeEnabled: boolean;
+  upgradeSourceUrl?: string;
   /** Undefined means the active profile is not Claude. Empty string means Claude default. */
   claudeModel?: string;
   allowedUsers: string[];
@@ -218,6 +219,20 @@ export function configFormCard(opts: ConfigFormOpts): object {
                 { text: { tag: 'plain_text', content: '关闭(默认)' }, value: 'no' },
               ],
             },
+            {
+              tag: 'markdown',
+              content:
+                '\n**升级源 URL**\n' +
+                '_推荐填写 git 仓库 URL;升级检查用它获取 release 分支最新 commit,不依赖当前运行目录是否有 `.git`_\n' +
+                '_留空:兼容旧配置,从当前/历史 release 的 git remote 解析_',
+            },
+            {
+              tag: 'input',
+              name: 'upgrade_source_url',
+              default_value: opts.upgradeSourceUrl ?? '',
+              placeholder: { tag: 'plain_text', content: 'https://github.com/org/repo.git' },
+              input_type: 'text',
+            },
             ...claudeModelElements(opts),
             { tag: 'hr' },
             collapsedAccessPanel('🔒 **访问控制**（点击展开）', accessElements),
@@ -305,6 +320,7 @@ export function configSavedCard(opts: ConfigFormOpts): object {
             `**群里需要 @ bot**:\`${opts.requireMentionInGroup ? '是' : '否'}\`\n\n` +
             `**lark-cli 身份策略**:\`${opts.larkCliIdentity === 'user-default' ? '允许用户身份' : '只允许应用身份'}\`\n\n` +
             `**受控自更新**:\`${opts.upgradeEnabled ? '启用' : '关闭'}\`\n\n` +
+            (opts.upgradeSourceUrl ? `**升级源 URL**:\`${opts.upgradeSourceUrl}\`\n\n` : '') +
             (opts.claudeModel !== undefined
               ? `**Claude Code 模型**:\`${opts.claudeModel || '默认'}\`\n\n`
               : '') +
