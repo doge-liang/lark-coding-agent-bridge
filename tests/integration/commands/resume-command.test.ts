@@ -289,6 +289,50 @@ describe('agent-aware resume commands', () => {
     expect(usage).not.toContain('last_token_usage');
   });
 
+  it('renders Claude usage from the current session snapshot', async () => {
+    const h = await createHarness('claude');
+    h.sessions.set('chat-1', 'sess-current', h.tmp.workspace);
+    const current = h.sessions.getRaw('chat-1') as unknown as {
+      usage?: {
+        inputTokens: number;
+        cachedInputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+        updatedAt: string;
+      };
+    };
+    current.usage = {
+      inputTokens: 1_000,
+      cachedInputTokens: 200,
+      outputTokens: 300,
+      totalTokens: 1_500,
+      updatedAt: '2026-06-25T18:30:00.000Z',
+    };
+
+    await expect(h.run('/usage')).resolves.toBe(true);
+
+    const usage = lastContentString(h.channel);
+    expect(usage).toContain('Claude 用量');
+    expect(usage).toContain('本轮 1,500');
+    expect(usage).toContain('输入 1,000');
+    expect(usage).toContain('缓存 200');
+    expect(usage).toContain('输出 300');
+    expect(usage).toContain('06-25 18:30 UTC');
+    expect(usage).toContain('sess-cur');
+    expect(usage).not.toContain('当前只支持 Codex');
+    expect(usage).not.toContain('Codex 用量');
+  });
+
+  it('explains that Claude usage needs a completed run snapshot', async () => {
+    const h = await createHarness('claude');
+
+    await expect(h.run('/usage')).resolves.toBe(true);
+
+    const usage = lastContentString(h.channel);
+    expect(usage).toContain('还没有当前 Claude session 的 usage 快照');
+    expect(usage).not.toContain('当前只支持 Codex');
+  });
+
   it('explains that Codex usage needs an active thread', async () => {
     const h = await createHarness('codex');
 

@@ -14,6 +14,18 @@ export interface SessionEntry {
    * scope, undefined = follow global default. Session resets preserve this
    * scope preference while removing the resumable session id/cwd. */
   idleTimeoutMinutes?: number;
+  /** Latest agent-reported usage snapshot for this scope. */
+  usage?: SessionUsageSnapshot;
+}
+
+export interface SessionUsageSnapshot {
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedInputTokens?: number;
+  reasoningOutputTokens?: number;
+  totalTokens?: number;
+  costUsd?: number;
+  updatedAt: string;
 }
 
 type SessionMap = Record<string, SessionEntry>;
@@ -43,13 +55,15 @@ export class SessionStore {
         const cwd = typeof entry.cwd === 'string' ? entry.cwd : undefined;
         const idleTimeoutMinutes =
           typeof entry.idleTimeoutMinutes === 'number' ? entry.idleTimeoutMinutes : undefined;
+        const usage = normalizeUsage(entry.usage);
         const hasSession = sessionId !== undefined && cwd !== undefined;
-        if (!hasSession && idleTimeoutMinutes === undefined) continue;
+        if (!hasSession && idleTimeoutMinutes === undefined && !usage) continue;
         this.data[chatId] = {
           ...(sessionId !== undefined ? { sessionId } : {}),
           ...(cwd !== undefined ? { cwd } : {}),
           updatedAt: entry.updatedAt,
           ...(idleTimeoutMinutes !== undefined ? { idleTimeoutMinutes } : {}),
+          ...(usage ? { usage } : {}),
         };
       }
     } catch (err) {
@@ -85,6 +99,27 @@ export class SessionStore {
       ...(prev?.idleTimeoutMinutes !== undefined
         ? { idleTimeoutMinutes: prev.idleTimeoutMinutes }
         : {}),
+      ...(prev?.usage ? { usage: prev.usage } : {}),
+    };
+    this.schedulePersist();
+  }
+
+  setUsage(chatId: string, usage: Omit<SessionUsageSnapshot, 'updatedAt'>): void {
+    const prev = this.data[chatId];
+    const totalTokens = usage.totalTokens ?? sumDefined([
+      usage.inputTokens,
+      usage.cachedInputTokens,
+      usage.outputTokens,
+      usage.reasoningOutputTokens,
+    ]);
+    this.data[chatId] = {
+      ...(prev ?? { updatedAt: Date.now() }),
+      updatedAt: Date.now(),
+      usage: {
+        ...usage,
+        ...(totalTokens !== undefined ? { totalTokens } : {}),
+        updatedAt: new Date().toISOString(),
+      },
     };
     this.schedulePersist();
   }
@@ -145,4 +180,31 @@ export class SessionStore {
         log.fail('session', err, { step: 'persist' });
       });
   }
+}
+
+function normalizeUsage(input: unknown): SessionUsageSnapshot | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const raw = input as Partial<SessionUsageSnapshot>;
+  const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : undefined;
+  if (!updatedAt) return undefined;
+  const usage: SessionUsageSnapshot = { updatedAt };
+  for (const key of [
+    'inputTokens',
+    'outputTokens',
+    'cachedInputTokens',
+    'reasoningOutputTokens',
+    'totalTokens',
+    'costUsd',
+  ] as const) {
+    if (typeof raw[key] === 'number' && Number.isFinite(raw[key])) {
+      usage[key] = raw[key];
+    }
+  }
+  return Object.keys(usage).length > 1 ? usage : undefined;
+}
+
+function sumDefined(values: Array<number | undefined>): number | undefined {
+  const numbers = values.filter((value): value is number => typeof value === 'number');
+  if (numbers.length === 0) return undefined;
+  return numbers.reduce((sum, value) => sum + value, 0);
 }

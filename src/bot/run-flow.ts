@@ -183,6 +183,16 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
 }
 
 export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
+  if (input.event.type === 'usage' && input.capability.agentId === 'claude') {
+    input.sessions.setUsage(input.scopeId, {
+      inputTokens: input.event.inputTokens,
+      outputTokens: input.event.outputTokens,
+      cachedInputTokens: input.event.cachedInputTokens,
+      reasoningOutputTokens: input.event.reasoningOutputTokens,
+      costUsd: input.event.costUsd,
+    });
+    return;
+  }
   if (input.event.type !== 'system') return;
   if (input.capability.agentId === 'claude' && input.event.sessionId) {
     const cwdRealpath = input.event.cwd ?? input.policy.cwdRealpath;

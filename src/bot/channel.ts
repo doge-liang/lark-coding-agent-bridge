@@ -988,6 +988,7 @@ async function processAgentStream(
         continue;
       }
       if (evt.type === 'usage') {
+        recordSession(evt);
         const { costUsd, inputTokens, outputTokens } = evt;
         if (costUsd !== undefined || inputTokens !== undefined || outputTokens !== undefined) {
           log.info('agent', 'usage', {

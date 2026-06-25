@@ -98,7 +98,7 @@ import {
 import { readCodexModelConfig, writeCodexModelConfig } from '../config/codex-config-file';
 import type { SessionCatalog, SessionCatalogIdentity } from '../session/catalog';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
-import type { SessionStore } from '../session/store';
+import type { SessionStore, SessionUsageSnapshot } from '../session/store';
 import { createUpgradeCommandService, type UpgradeCommandService } from '../upgrade/command-service';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { evaluateRunPolicy } from '../policy/run-policy';
@@ -881,7 +881,16 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
 
 async function handleUsage(_args: string, ctx: CommandContext): Promise<void> {
   if (ctx.controls.profileConfig.agentKind !== 'codex') {
-    await reply(ctx, '`/usage` 当前只支持 Codex profile；Claude profile 暂时没有可用的上下文窗口快照。');
+    const sess = ctx.sessions.getRaw(ctx.scope);
+    if (!sess?.usage) {
+      await reply(ctx, '还没有当前 Claude session 的 usage 快照。先发一条普通消息跑完一轮后，再用 `/usage` 查看最近一次 token 用量。');
+      return;
+    }
+    await ctx.channel.send(
+      ctx.msg.chatId,
+      { card: usageCard(formatClaudeUsageCardInfo(sess.sessionId ?? ctx.scope, sess.usage)) },
+      { replyTo: ctx.msg.messageId },
+    );
     return;
   }
   const catalogEntry =
@@ -932,6 +941,15 @@ function formatUsageCardInfo(usage: CodexUsageSnapshot): UsageCardInfo {
     ...(usage.last ? { recent: formatUsageTokens(usage.last) } : {}),
     ...(usage.total ? { cumulative: formatUsageTokens(usage.total) } : {}),
     ...(formatUsageRateLimits(usage.rateLimits) ? { rateLimits: formatUsageRateLimits(usage.rateLimits)! } : {}),
+  };
+}
+
+function formatClaudeUsageCardInfo(sessionId: string, usage: SessionUsageSnapshot): UsageCardInfo {
+  return {
+    title: '📈 Claude 用量',
+    sessionId: shortId(sessionId),
+    ...(formatUsageTimestamp(usage.updatedAt) ? { sampledAt: formatUsageTimestamp(usage.updatedAt) } : {}),
+    recent: formatUsageTokens(usage),
   };
 }
 

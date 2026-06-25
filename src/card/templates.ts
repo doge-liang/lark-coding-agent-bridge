@@ -129,6 +129,7 @@ export function statusCard(info: StatusInfo): object {
 }
 
 export interface UsageCardInfo {
+  title?: string;
   sessionId: string;
   sampledAt?: string;
   context?: {
@@ -201,7 +202,7 @@ export function usageCard(info: UsageCardInfo): object {
       { text: '🔁 恢复会话', value: { cmd: 'resume' } },
     ]),
   );
-  return shell('📈 Codex 用量', elements);
+  return shell(info.title ?? '📈 Codex 用量', elements);
 }
 
 function usageMetricLine(label: string, usage: NonNullable<UsageCardInfo['recent']>): string {
