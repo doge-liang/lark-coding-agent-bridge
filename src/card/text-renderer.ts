@@ -1,6 +1,9 @@
 import type { Block, RunState, ToolEntry } from './run-state';
 import { toolHeaderText } from './tool-render';
 
+const MARKDOWN_STREAM_MAX_CHARS = 24_000;
+const OMITTED_OLDER_CONTENT = '_已省略较早的流式内容，保留最近输出。_';
+
 /**
  * Render `RunState` as plain markdown text — used in `messageReply: 'text'`
  * mode where we stream a markdown message instead of a card.
@@ -30,7 +33,7 @@ export function renderText(state: RunState): string {
     parts.push(footerLine(state.footer));
   }
 
-  return parts.join('\n\n');
+  return fitMarkdown(parts);
 }
 
 function renderBlock(block: Block): string {
@@ -54,4 +57,37 @@ function footerLine(status: 'thinking' | 'tool_running' | 'streaming'): string {
   if (status === 'thinking') return '_🧠 正在思考…_';
   if (status === 'tool_running') return '_🧰 正在调用工具…_';
   return '_✍️ 正在输出…_';
+}
+
+function fitMarkdown(parts: string[]): string {
+  const full = joinParts(parts);
+  if (full.length <= MARKDOWN_STREAM_MAX_CHARS) return full;
+
+  const kept: string[] = [];
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i];
+    if (!part) continue;
+    const candidate = joinParts([OMITTED_OLDER_CONTENT, part, ...kept]);
+    if (candidate.length <= MARKDOWN_STREAM_MAX_CHARS) {
+      kept.unshift(part);
+      continue;
+    }
+
+    const current = joinParts([OMITTED_OLDER_CONTENT, ...kept]);
+    const budget = MARKDOWN_STREAM_MAX_CHARS - current.length - 2;
+    if (budget > 20) kept.unshift(tailMarkdown(part, budget));
+    break;
+  }
+
+  return joinParts([OMITTED_OLDER_CONTENT, ...kept]);
+}
+
+function tailMarkdown(part: string, budget: number): string {
+  if (part.length <= budget) return part;
+  if (budget <= 1) return '…';
+  return `…${part.slice(-(budget - 1))}`;
+}
+
+function joinParts(parts: string[]): string {
+  return parts.filter((part) => part.length > 0).join('\n\n');
 }

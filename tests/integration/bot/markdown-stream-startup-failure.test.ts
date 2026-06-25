@@ -173,6 +173,55 @@ describe('markdown stream startup failures', () => {
     );
   }, 10_000);
 
+  it('keeps markdown stream updates below the rollover limit for long tool-heavy runs', async () => {
+    const markdownUpdates: string[] = [];
+    const events: AgentEvent[] = [];
+    for (let i = 0; i < 450; i++) {
+      const id = `tool-${i}`;
+      events.push({
+        type: 'tool_use',
+        id,
+        name: 'Bash',
+        input: {
+          command: `printf '${String(i).padStart(3, '0')}-${'x'.repeat(120)}'`,
+        },
+      });
+      events.push({
+        type: 'tool_result',
+        id,
+        output: 'ok',
+        isError: false,
+      });
+    }
+    events.push({ type: 'text', delta: '最终结果保留在尾部。' });
+    events.push({ type: 'done', terminationReason: 'normal' });
+
+    const h = await createHarness({
+      agentEvents: [events],
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          markdown?: (ctrl: { setContent(markdown: string): Promise<void> }) => Promise<void>;
+        }).markdown;
+        if (!producer) throw new Error('expected markdown stream input');
+        await producer({
+          setContent: async (markdown: string): Promise<void> => {
+            markdownUpdates.push(markdown);
+          },
+        });
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_first', 'run many tools'));
+
+    await waitFor(() => markdownUpdates.length > 0, 10_000);
+    expect(Math.max(...markdownUpdates.map((content) => content.length))).toBeLessThanOrEqual(24_000);
+    expect(markdownUpdates.some((content) => content.includes('已省略较早'))).toBe(true);
+    const finalMarkdown = markdownUpdates.at(-1) ?? '';
+    expect(finalMarkdown).toContain('最终结果保留在尾部');
+    expect(finalMarkdown).not.toContain('正在调用工具');
+  });
+
   it('sends a terminal fallback card when card stream transport stalls after render completes', async () => {
     const streamNeverFinishes = deferred<void>();
     let producerCompleted = false;
