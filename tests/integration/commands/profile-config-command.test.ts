@@ -54,6 +54,71 @@ afterEach(async () => {
 });
 
 describe('profile-aware account and config commands', () => {
+  it('opens the Codex profile form through the Feishu menu shortcut text', async () => {
+    const h = await createHarness({ activeProfile: 'codex-dev' });
+
+    await h.command('Codex 设置');
+
+    const card = lastContent(h);
+    expect(card).toContain('Codex profile 设置');
+    expect(card).toContain('default_access');
+    expect(card).toContain('max_access');
+    expect(card).toContain('codex_home_mode');
+    expect(card).toContain('ignore_user_config');
+    expect(card).toContain('ignore_rules');
+  });
+
+  it('saves /codex-config submit into the active Codex profile', async () => {
+    vi.useFakeTimers();
+    const h = await createHarness({ activeProfile: 'codex-dev' });
+    const nextWorkspace = join(h.rootDir, 'next-workspace');
+    const customCodexHome = join(h.rootDir, 'custom-codex-home');
+    await mkdir(nextWorkspace, { recursive: true });
+    await mkdir(customCodexHome, { recursive: true });
+
+    await h.command('/codex-config submit', {
+      default_workspace: nextWorkspace,
+      default_access: 'workspace',
+      max_access: 'full',
+      codex_home_mode: 'custom',
+      codex_home_path: customCodexHome,
+      ignore_user_config: 'yes',
+      ignore_rules: 'no',
+    });
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    const root = await waitForRoot(h.rootDir, (candidate) =>
+      candidate.profiles['codex-dev']?.codex?.codexHome === customCodexHome,
+    );
+    const profile = root.profiles['codex-dev'];
+    expect(profile?.workspaces.default).toBe(nextWorkspace);
+    expect(profile?.permissions).toEqual({
+      defaultAccess: 'workspace',
+      maxAccess: 'full',
+    });
+    expect(profile?.codex).toMatchObject({
+      binaryPath: 'codex',
+      codexHome: customCodexHome,
+      inheritCodexHome: false,
+      ignoreUserConfig: true,
+      ignoreRules: false,
+    });
+    expect(root.profiles.claude?.workspaces.default).not.toBe(nextWorkspace);
+    const card = lastContent(h);
+    expect(card).toContain('Codex 设置已保存');
+    expect(card).toContain('需要重启当前 profile');
+  });
+
+  it('rejects /codex-config on a non-Codex profile', async () => {
+    const h = await createHarness({ activeProfile: 'claude' });
+
+    await h.command('/codex-config');
+
+    const message = lastContent(h);
+    expect(message).toContain('当前 profile 不是 Codex');
+  });
+
   it('saves /config submit into the active v2 profile without flattening root config', async () => {
     vi.useFakeTimers();
     const h = await createHarness();
@@ -195,23 +260,26 @@ describe('profile-aware account and config commands', () => {
   });
 });
 
-async function createHarness(): Promise<{
+async function createHarness(
+  opts: { activeProfile?: 'claude' | 'codex-dev' } = {},
+): Promise<{
   rootDir: string;
   channel: ReturnType<typeof createFakeChannel>;
   command(content: string, formValue?: Record<string, unknown>): Promise<boolean>;
 }> {
+  const activeProfile = opts.activeProfile ?? 'claude';
   const rootDir = await mkdtemp(join(tmpdir(), 'bridge-profile-config-command-'));
   roots.push(rootDir);
   const workspace = join(rootDir, 'workspace');
   await mkdir(workspace, { recursive: true });
-  const root = await writeRoot(rootDir, workspace);
-  const profileConfig = root.profiles.claude!;
-  const appPaths = resolveAppPaths({ rootDir, profile: 'claude' });
+  const root = await writeRoot(rootDir, workspace, activeProfile);
+  const profileConfig = root.profiles[activeProfile]!;
+  const appPaths = resolveAppPaths({ rootDir, profile: activeProfile });
   const channel = createFakeChannel();
   const sessions = new SessionStore(appPaths.sessionsFile);
   const workspaces = new WorkspaceStore(appPaths.workspacesFile);
   const controls = {
-    profile: 'claude',
+    profile: activeProfile,
     profileConfig,
     botOwnerId: 'ou-admin',
     ownerRefreshState: 'ok',
@@ -219,7 +287,7 @@ async function createHarness(): Promise<{
     restart: vi.fn(async () => {}),
     exit: vi.fn(async () => {}),
     configPath: appPaths.configFile,
-    cfg: runtimeProfileConfig(root, 'claude'),
+    cfg: runtimeProfileConfig(root, activeProfile),
     processId: 'proc-1',
   } satisfies Controls;
 
@@ -238,15 +306,19 @@ async function createHarness(): Promise<{
         activeRuns: new ActiveRuns(),
         controls,
         formValue,
-        fromCardAction: true,
+        fromCardAction: Boolean(formValue),
       }),
   };
 }
 
-async function writeRoot(rootDir: string, workspace: string): Promise<RootConfig> {
+async function writeRoot(
+  rootDir: string,
+  workspace: string,
+  activeProfile: 'claude' | 'codex-dev' = 'claude',
+): Promise<RootConfig> {
   const root: RootConfig = {
     schemaVersion: 2,
-    activeProfile: 'claude',
+    activeProfile,
     preferences: {},
     profiles: {
       claude: createDefaultProfileConfig({
@@ -262,12 +334,14 @@ async function writeRoot(rootDir: string, workspace: string): Promise<RootConfig
           app: { id: 'cli_codex', secret: '${APP_SECRET}', tenant: 'feishu' },
         },
         codex: { binaryPath: 'codex' },
+        access: { admins: ['ou-admin'] },
       }),
     },
   };
   root.profiles.claude!.workspaces.default = workspace;
+  root.profiles['codex-dev']!.workspaces.default = workspace;
   await writeJson(resolveAppPaths({ rootDir }).configFile, root);
-  await writeFile(join(rootDir, 'active-profile'), 'claude\n', 'utf8');
+  await writeFile(join(rootDir, 'active-profile'), `${activeProfile}\n`, 'utf8');
   return root;
 }
 
@@ -310,6 +384,10 @@ function appliedLarkCliIdentities(): unknown[] {
 async function writeJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function lastContent(h: { channel: ReturnType<typeof createFakeChannel> }): string {
+  return JSON.stringify(h.channel.sent.at(-1)?.content ?? '');
 }
 
 function message(content: string): NormalizedMessage {

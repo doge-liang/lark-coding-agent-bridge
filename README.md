@@ -180,6 +180,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/usage` | Show current Codex session token usage and context window |
 | `/menu` | Show suggested Feishu / Lark bot floating-menu configuration |
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
+| `/codex-config` | Adjust the active Codex profile's permissions, default workspace, and Codex home |
 | `/invite user @name` | Allow a user to use the bot in DMs |
 | `/invite admin @name` | Add an access-control admin |
 | `/invite group` | Allow the current group to use the bot |
@@ -217,6 +218,7 @@ Bot custom menus are configured and published in the Feishu / Lark Developer Con
 | `菜单` | `/menu` |
 | `工作目录` | `/ws` |
 | `配置` | `/config` |
+| `Codex 设置` | `/codex-config` |
 | `升级检查` | `/upgrade check` |
 | `停止` | `/stop` |
 
@@ -289,6 +291,8 @@ Mode mapping:
 | `read-only` | `plan` | `read-only` |
 
 The legacy `sandbox` field is still readable for old configs. After the bridge saves the profile, it migrates that setting to canonical `permissions`.
+
+For Codex profiles, owner/admin users can also send `/codex-config` or use the `Codex 设置` floating-menu entry to edit `workspaces.default`, canonical permissions, Codex home mode, `ignoreUserConfig`, and `ignoreRules` through a Feishu form card.
 
 ## Data directories
 

@@ -14,6 +14,14 @@ import {
   accountSuccessCard,
 } from '../card/account-cards';
 import {
+  codexConfigCancelledCard,
+  codexConfigFailedCard,
+  codexConfigFormCard,
+  codexConfigSavedCard,
+  type CodexConfigFormOpts,
+  type CodexHomeMode,
+} from '../card/codex-config-card';
+import {
   configCancelledCard,
   configFailedCard,
   configFormCard,
@@ -45,7 +53,12 @@ import {
 } from '../config/schema';
 import type { ProfileAccess, ProfileConfig } from '../config/profile-schema';
 import { resolveAppPaths } from '../config/app-paths';
-import { accessToClaudePermissionMode } from '../config/permissions';
+import {
+  accessToClaudePermissionMode,
+  assertAccessPair,
+  permissionsToLegacySandbox,
+  type AccessMode,
+} from '../config/permissions';
 import {
   loadRootConfig,
   runtimeProfileConfig,
@@ -189,6 +202,7 @@ const handlers: Record<string, Handler> = {
   '/help': handleHelp,
   '/account': handleAccount,
   '/config': handleConfig,
+  '/codex-config': handleCodexConfig,
   '/stop': handleStop,
   '/timeout': handleTimeout,
   '/ps': handlePs,
@@ -212,6 +226,8 @@ const commandAliases = new Map<string, string>([
   ['新会话', '/new'],
   ['停止', '/stop'],
   ['配置', '/config'],
+  ['Codex 设置', '/codex-config'],
+  ['Codex 配置', '/codex-config'],
   ['升级检查', '/upgrade check'],
 ]);
 
@@ -223,6 +239,7 @@ const commandAliases = new Map<string, string>([
 const ADMIN_COMMANDS = new Set([
   '/account',
   '/config',
+  '/codex-config',
   '/ps',
   '/exit',
   '/reconnect',
@@ -2204,6 +2221,226 @@ function configFailureMessage(step: string, rollbackFailed: boolean, larkCliPoli
     return 'lark-cli 身份策略未生效，未做任何修改。';
   }
   return '配置未写入，未做任何修改。';
+}
+
+// ────────────── /codex-config — Codex profile form ──────────────
+
+async function handleCodexConfig(args: string, ctx: CommandContext): Promise<void> {
+  const sub = args.trim().split(/\s+/)[0] ?? '';
+  if (!isCodexProfile(ctx.controls.profileConfig)) {
+    await reply(ctx, '当前 profile 不是 Codex，`/codex-config` 只支持 Codex profile。');
+    return;
+  }
+
+  switch (sub) {
+    case '':
+      return showCodexConfigForm(ctx);
+    case 'submit':
+      return submitCodexConfig(ctx);
+    case 'cancel':
+      return cancelCodexConfig(ctx);
+    default:
+      await reply(ctx, '用法:`/codex-config`');
+  }
+}
+
+function isCodexProfile(profile: ProfileConfig): boolean {
+  return profile.agentKind === 'codex' && Boolean(profile.codex);
+}
+
+async function showCodexConfigForm(ctx: CommandContext): Promise<void> {
+  const card = codexConfigFormCard(codexConfigFormOpts(ctx));
+  if (ctx.fromCardAction) await recallMessage(ctx, ctx.msg.messageId);
+  await sendManagedCard(ctx.channel, ctx.msg.chatId, card);
+}
+
+async function cancelCodexConfig(ctx: CommandContext): Promise<void> {
+  if (ctx.fromCardAction) {
+    const formMsgId = ctx.msg.messageId;
+    void (async () => {
+      await new Promise((r) => setTimeout(r, FORM_SETTLE_MS));
+      await showResultCardInPlace(ctx, formMsgId, codexConfigCancelledCard());
+    })();
+  }
+}
+
+async function submitCodexConfig(ctx: CommandContext): Promise<void> {
+  const fv = ctx.formValue ?? {};
+  const formMsgId = ctx.msg.messageId;
+
+  void (async () => {
+    const submittedAt = Date.now();
+    const waitForSettle = async (): Promise<void> => {
+      const elapsed = Date.now() - submittedAt;
+      if (elapsed < FORM_SETTLE_MS) {
+        await new Promise<void>((r) => setTimeout(r, FORM_SETTLE_MS - elapsed));
+      }
+    };
+
+    let saved: CodexConfigFormOpts;
+    try {
+      saved = await saveCodexProfileConfig(ctx, fv);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.fail('command', err, { step: 'codex-config.save' });
+      reportMetric('command_fail', 1, { step: 'codex-config.save' });
+      await waitForSettle();
+      await showResultCardInPlace(ctx, formMsgId, codexConfigFailedCard(msg));
+      return;
+    }
+
+    log.info('command', 'codex-config-saved', {
+      profile: ctx.controls.profile,
+      defaultAccess: saved.defaultAccess,
+      maxAccess: saved.maxAccess,
+      codexHomeMode: saved.codexHomeMode,
+      ignoreUserConfig: saved.ignoreUserConfig,
+      ignoreRules: saved.ignoreRules,
+    });
+    await waitForSettle();
+    await showResultCardInPlace(ctx, formMsgId, codexConfigSavedCard(saved));
+  })();
+}
+
+function codexConfigFormOpts(ctx: CommandContext): CodexConfigFormOpts {
+  const profile = ctx.controls.profileConfig;
+  const codex = profile.codex;
+  if (!codex) throw new Error('current profile has no Codex config');
+  const profileCodexHomePath = join(commandProfilePaths(ctx).profileDir, 'codex-home');
+  const codexHomeMode: CodexHomeMode =
+    codex.codexHome ? 'custom' : codex.inheritCodexHome === false ? 'profile' : 'inherit';
+  return {
+    profileName: ctx.controls.profile,
+    binaryPath: codex.binaryPath,
+    defaultWorkspace: profile.workspaces.default ?? '',
+    defaultAccess: profile.permissions.defaultAccess,
+    maxAccess: profile.permissions.maxAccess,
+    codexHomeMode,
+    codexHomePath: codex.codexHome ?? '',
+    profileCodexHomePath,
+    ignoreUserConfig: codex.ignoreUserConfig === true,
+    ignoreRules: codex.ignoreRules !== false,
+  };
+}
+
+async function saveCodexProfileConfig(
+  ctx: CommandContext,
+  fv: Record<string, unknown>,
+): Promise<CodexConfigFormOpts> {
+  const current = codexConfigFormOpts(ctx);
+  const defaultAccess = parseAccessMode(fv.default_access, current.defaultAccess);
+  const maxAccess = parseAccessMode(fv.max_access, current.maxAccess);
+  assertAccessPair(defaultAccess, maxAccess);
+
+  const rawWorkspace = Object.hasOwn(fv, 'default_workspace')
+    ? String(fv.default_workspace ?? '').trim()
+    : current.defaultWorkspace;
+  const defaultWorkspace = await resolveOptionalProfileDirectory(rawWorkspace, '默认工作目录');
+  const home = await resolveCodexHomeConfig(fv, current);
+  const ignoreUserConfig = parseYesNo(fv.ignore_user_config, current.ignoreUserConfig);
+  const ignoreRules = parseYesNo(fv.ignore_rules, current.ignoreRules);
+
+  await withConfigFileLock(ctx.controls.configPath, async () => {
+    const root = await loadRootConfig(ctx.controls.configPath);
+    if (!root) throw new Error('当前配置不是 profile config，无法保存 Codex 设置。');
+    const profile = root.profiles[ctx.controls.profile];
+    if (!profile) throw new Error(`profile not found: ${ctx.controls.profile}`);
+    if (!isCodexProfile(profile) || !profile.codex) {
+      throw new Error('当前 profile 不是 Codex，未做修改。');
+    }
+
+    const nextWorkspaces = { ...profile.workspaces };
+    if (defaultWorkspace) nextWorkspaces.default = defaultWorkspace;
+    else delete nextWorkspaces.default;
+
+    const permissions = { defaultAccess, maxAccess };
+    const nextCodex = {
+      ...profile.codex,
+      ...(home.codexHome ? { codexHome: home.codexHome } : { codexHome: undefined }),
+      inheritCodexHome: home.inheritCodexHome,
+      ignoreUserConfig,
+      ignoreRules,
+    };
+
+    root.profiles[ctx.controls.profile] = {
+      ...profile,
+      workspaces: nextWorkspaces,
+      permissions,
+      sandbox: permissionsToLegacySandbox(permissions),
+      codex: nextCodex,
+    };
+    await saveRootConfig(root, ctx.controls.configPath);
+    ctx.controls.profileConfig = root.profiles[ctx.controls.profile]!;
+    ctx.controls.cfg = runtimeProfileConfig(root, ctx.controls.profile);
+  });
+
+  return codexConfigFormOpts(ctx);
+}
+
+function parseAccessMode(value: unknown, fallback: AccessMode): AccessMode {
+  const raw = String(value ?? '').trim();
+  return isAccessMode(raw) ? raw : fallback;
+}
+
+function isAccessMode(value: string): value is AccessMode {
+  return value === 'read-only' || value === 'workspace' || value === 'full';
+}
+
+function parseYesNo(value: unknown, fallback: boolean): boolean {
+  const raw = String(value ?? '').trim();
+  if (raw === 'yes') return true;
+  if (raw === 'no') return false;
+  return fallback;
+}
+
+async function resolveOptionalProfileDirectory(
+  rawValue: string,
+  label: string,
+): Promise<string> {
+  if (!rawValue) return '';
+  if (!isAbsoluteOrTilde(rawValue)) {
+    throw new Error(`${label}请使用绝对路径或 ~/...。`);
+  }
+  const resolved = await resolveWorkingDirectory(expandTilde(rawValue));
+  if (!resolved.ok) {
+    throw new Error(resolved.userVisible.replace(/^工作目录/, label));
+  }
+  return resolved.cwdRealpath;
+}
+
+async function resolveCodexHomeConfig(
+  fv: Record<string, unknown>,
+  current: CodexConfigFormOpts,
+): Promise<{
+  codexHome?: string;
+  inheritCodexHome: boolean;
+}> {
+  const rawMode = String(fv.codex_home_mode ?? '').trim();
+  const mode: CodexHomeMode =
+    rawMode === 'inherit' || rawMode === 'profile' || rawMode === 'custom'
+      ? rawMode
+      : current.codexHomeMode;
+
+  if (mode === 'inherit') {
+    return { inheritCodexHome: true };
+  }
+  if (mode === 'profile') {
+    return { inheritCodexHome: false };
+  }
+
+  const rawPath = String(fv.codex_home_path ?? current.codexHomePath).trim();
+  if (!rawPath) throw new Error('自定义 Codex home 不能为空。');
+  if (!isAbsoluteOrTilde(rawPath)) {
+    throw new Error('自定义 Codex home 请使用绝对路径或 ~/...。');
+  }
+  const resolved = await resolveWorkingDirectory(expandTilde(rawPath));
+  if (!resolved.ok) {
+    throw new Error(resolved.userVisible.replace(/^工作目录/, 'Codex home'));
+  }
+  return {
+    codexHome: resolved.cwdRealpath,
+    inheritCodexHome: false,
+  };
 }
 
 function commandProfilePaths(ctx: CommandContext) {
