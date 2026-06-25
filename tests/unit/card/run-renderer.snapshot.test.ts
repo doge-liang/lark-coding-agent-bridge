@@ -100,6 +100,19 @@ describe('run card renderer snapshots', () => {
     });
   });
 
+  it('keeps long streaming text card updates bounded while preserving the latest output', () => {
+    const state = stateFrom([
+      { type: 'text', delta: `${'early-output '.repeat(2500)}TAIL_MARKER` },
+    ]);
+
+    const card = renderCard(state);
+    const markdown = collectMarkdownContent(card);
+
+    expect(Math.max(...markdown.map((content) => content.length))).toBeLessThanOrEqual(12_000);
+    expect(markdown.join('\n')).toContain('已省略较早');
+    expect(markdown.join('\n')).toContain('TAIL_MARKER');
+  });
+
   it('keeps local paths in user-visible cards and text fallbacks', () => {
     const sensitivePath = '/Users/example/private/customer/repo/secret.txt';
     const state = stateFrom([
@@ -122,4 +135,15 @@ function stateFrom(events: AgentEvent[]): RunState {
 
 function expectCard(state: RunState) {
   return expect(normalizeCard(renderCard(state)));
+}
+
+function collectMarkdownContent(value: unknown): string[] {
+  if (!value || typeof value !== 'object') return [];
+  if (Array.isArray(value)) return value.flatMap((item) => collectMarkdownContent(item));
+  const record = value as Record<string, unknown>;
+  const current = record.tag === 'markdown' && typeof record.content === 'string' ? [record.content] : [];
+  return [
+    ...current,
+    ...Object.values(record).flatMap((item) => collectMarkdownContent(item)),
+  ];
 }

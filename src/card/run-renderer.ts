@@ -2,6 +2,8 @@ import type { Block, FooterStatus, RunState, ToolEntry } from './run-state';
 import { toolBodyMd, toolHeaderText } from './tool-render';
 
 const REASONING_MAX = 1500;
+const TEXT_BLOCK_MAX = 12_000;
+const OMITTED_OLDER_TEXT = '_已省略较早的流式内容，保留最近输出。_';
 const COLLAPSE_TOOL_THRESHOLD = 3;
 
 interface ToolGroup {
@@ -28,7 +30,7 @@ export function renderCard(state: RunState, options: RunCardRenderOptions = {}):
   for (const group of groupBlocks(state.blocks)) {
     if (group.kind === 'text') {
       if (group.content.trim()) {
-        elements.push(markdown(group.content));
+        elements.push(markdown(fitTextBlock(group.content)));
       }
     } else {
       elements.push(...renderToolGroup(group.tools, state.terminal !== 'running'));
@@ -171,6 +173,14 @@ function panelHeader(titleMd: string): object {
 
 function markdown(content: string): object {
   return { tag: 'markdown', content };
+}
+
+function fitTextBlock(content: string): string {
+  if (content.length <= TEXT_BLOCK_MAX) return content;
+  const prefix = `${OMITTED_OLDER_TEXT}\n\n`;
+  const budget = TEXT_BLOCK_MAX - prefix.length;
+  if (budget <= 1) return OMITTED_OLDER_TEXT;
+  return `${prefix}…${content.slice(-(budget - 1))}`;
 }
 
 function noteMd(content: string): object {
