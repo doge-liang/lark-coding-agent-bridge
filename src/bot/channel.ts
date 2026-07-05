@@ -65,6 +65,7 @@ import type { AppPaths } from '../config/app-paths';
 
 const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
+const STREAM_LIFECYCLE_FALLBACK_AFTER_MS = 9 * 60_000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
 const INTERRUPT_POLL_MS = 100;
 
@@ -818,6 +819,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
       );
+      const streamStartedAtMs = Date.now();
       const streamDone = channel.stream(
         chatId,
         {
@@ -837,6 +839,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         mode: replyMode,
         streamDone,
         renderDone,
+        streamStartedAtMs,
         producerStarted: () => producerStarted,
         fallback: async (state) => {
           await channel.send(
@@ -863,6 +866,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
       );
+      const streamStartedAtMs = Date.now();
       const streamDone = channel.stream(
         chatId,
         {
@@ -879,6 +883,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         mode: replyMode,
         streamDone,
         renderDone,
+        streamStartedAtMs,
         producerStarted: () => producerStarted,
         fallback: async (state) => {
           const body = renderText(filterForPrefs(state));
@@ -1070,6 +1075,7 @@ async function awaitRenderAwareStream(input: {
   mode: 'card' | 'markdown';
   streamDone: Promise<unknown>;
   renderDone: Promise<RunState>;
+  streamStartedAtMs: number;
   producerStarted: () => boolean;
   fallback: (state: RunState) => Promise<void>;
 }): Promise<void> {
@@ -1096,6 +1102,7 @@ async function awaitRenderAwareStream(input: {
   if (first.kind === 'stream') {
     const rendered = await renderResult;
     if (!rendered.ok) throw rendered.err;
+    await runLifecycleFallbackIfNeeded(input, rendered.state);
     return;
   }
 
@@ -1129,6 +1136,26 @@ async function awaitRenderAwareStream(input: {
     return;
   }
   if (!terminal.ok) throw terminal.err;
+  await runLifecycleFallbackIfNeeded(input, first.state);
+}
+
+async function runLifecycleFallbackIfNeeded(
+  input: {
+    mode: 'card' | 'markdown';
+    streamStartedAtMs: number;
+    fallback: (state: RunState) => Promise<void>;
+  },
+  state: RunState,
+): Promise<void> {
+  const ageMs = Date.now() - input.streamStartedAtMs;
+  if (ageMs < STREAM_LIFECYCLE_FALLBACK_AFTER_MS) return;
+
+  log.warn('stream', 'lifecycle-final-fallback', {
+    mode: input.mode,
+    ageMs,
+    thresholdMs: STREAM_LIFECYCLE_FALLBACK_AFTER_MS,
+  });
+  await runFallbackReply(input.mode, state, input.fallback);
 }
 
 async function runFallbackReply(

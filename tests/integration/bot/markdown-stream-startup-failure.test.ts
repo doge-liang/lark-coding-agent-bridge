@@ -297,6 +297,49 @@ describe('markdown stream startup failures', () => {
     expect(markdownUpdates.at(-1)).toContain('最终结果应该补发');
   }, 10_000);
 
+  it('sends final markdown separately when the stream outlives Lark card lifecycle', async () => {
+    const realNow = Date.now.bind(Date);
+    let offsetMs = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offsetMs);
+
+    const markdownUpdates: string[] = [];
+    const h = await createHarness({
+      agentEvents: [
+        [
+          { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'sleep 600' } },
+          { type: 'tool_result', id: 'tool-1', output: 'done', isError: false },
+          { type: 'text', delta: '长任务最终结果必须可见。' },
+          { type: 'done', terminationReason: 'normal' },
+        ],
+      ],
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          markdown?: (ctrl: { setContent(markdown: string): Promise<void> }) => Promise<void>;
+        }).markdown;
+        if (!producer) throw new Error('expected markdown stream input');
+        await producer({
+          setContent: async (markdown: string): Promise<void> => {
+            markdownUpdates.push(markdown);
+            if (markdown.includes('长任务最终结果必须可见')) {
+              offsetMs = 10 * 60_000 + 1;
+            }
+          },
+        });
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_first', 'run for a long time'));
+
+    await waitForWallClock(() =>
+      markdownUpdates.some((content) => content.includes('长任务最终结果必须可见')),
+    );
+    await waitForWallClock(() => h.channel.sent.length > 0, 1000);
+    const markdown = lastMarkdown(h.channel);
+    expect(markdown).toContain('长任务最终结果必须可见');
+    expect(markdown).not.toContain('正在调用工具');
+  });
+
   it('marks the card interrupted promptly when a silent tool run is stopped', async () => {
     const updates: unknown[] = [];
     let producerStarted = false;
@@ -601,6 +644,15 @@ function lastCard(channel: FakeLarkChannel): object {
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('timed out waiting for async work');
+}
+
+async function waitForWallClock(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
     if (predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
