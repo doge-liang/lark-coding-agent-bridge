@@ -1,0 +1,71 @@
+import { describe, expect, it } from 'vitest';
+import { translateSdkMessage } from '../../../../src/agent/claude/sdk-translate.js';
+
+describe('translateSdkMessage', () => {
+  it('maps system/init to a system event', () => {
+    expect(
+      translateSdkMessage({ type: 'system', subtype: 'init', session_id: 's1', cwd: '/w', model: 'claude-x' }),
+    ).toEqual([{ type: 'system', sessionId: 's1', cwd: '/w', model: 'claude-x' }]);
+  });
+
+  it('maps assistant content blocks to text/thinking/tool_use', () => {
+    expect(
+      translateSdkMessage({
+        type: 'assistant',
+        session_id: 's1',
+        message: {
+          content: [
+            { type: 'text', text: 'hi' },
+            { type: 'thinking', thinking: 'hmm' },
+            { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+          ],
+        },
+      }),
+    ).toEqual([
+      { type: 'text', delta: 'hi' },
+      { type: 'thinking', delta: 'hmm' },
+      { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+    ]);
+  });
+
+  it('maps user tool_result blocks', () => {
+    expect(
+      translateSdkMessage({
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok', is_error: false }] },
+      }),
+    ).toEqual([{ type: 'tool_result', id: 't1', output: 'ok', isError: false }]);
+  });
+
+  it('maps a successful result to usage + done', () => {
+    expect(
+      translateSdkMessage({
+        type: 'result',
+        subtype: 'success',
+        session_id: 's1',
+        total_cost_usd: 0.02,
+        usage: { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 5 },
+      }),
+    ).toEqual([
+      { type: 'usage', inputTokens: 10, outputTokens: 20, cachedInputTokens: 5, costUsd: 0.02 },
+      { type: 'done', sessionId: 's1', terminationReason: 'normal' },
+    ]);
+  });
+
+  it('maps an error result to an error event', () => {
+    const out = translateSdkMessage({ type: 'result', subtype: 'error_during_execution', session_id: 's1' });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ type: 'error', terminationReason: 'failed' });
+  });
+
+  it('maps an assistant error field to an error event', () => {
+    const out = translateSdkMessage({ type: 'assistant', error: 'billing_error', session_id: 's1', message: { content: [] } });
+    expect(out[0]).toMatchObject({ type: 'error', terminationReason: 'failed' });
+    expect((out[0] as { message: string }).message).toContain('billing_error');
+  });
+
+  it('ignores unrelated message types', () => {
+    expect(translateSdkMessage({ type: 'stream_event' })).toEqual([]);
+    expect(translateSdkMessage(null)).toEqual([]);
+  });
+});
