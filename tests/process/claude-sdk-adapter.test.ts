@@ -106,3 +106,48 @@ describe('ClaudeSdkAdapter driver parity', () => {
     expect(first.done ? undefined : first.value.type).toBe('error');
   });
 });
+
+describe('ClaudeSdkAdapter interactive approval', () => {
+  // fake query that drives canUseTool from options, then finishes.
+  function approvalQuery() {
+    return ((params: { options?: Record<string, unknown> }) => {
+      const canUseTool = params.options?.canUseTool as
+        | ((n: string, i: unknown, o: { signal: AbortSignal; toolUseID: string }) => Promise<unknown>)
+        | undefined;
+      const iterable = (async function* () {
+        const controller = params.options?.abortController as AbortController;
+        const decision = await canUseTool!('Bash', { command: 'rm -rf x' }, {
+          signal: controller.signal,
+          toolUseID: 'tu-1',
+        });
+        yield { type: 'assistant', session_id: 's', message: { content: [{ type: 'text', text: JSON.stringify(decision) }] } };
+        yield { type: 'result', subtype: 'success', session_id: 's' };
+      })();
+      return Object.assign(iterable, { interrupt: async () => {} });
+    }) as never;
+  }
+
+  it('emits permission_request and honors an allow response', async () => {
+    const adapter = new ClaudeSdkAdapter({ queryFn: approvalQuery() });
+    const run = adapter.run({ runId: 'r', prompt: 'p', cwd: '/w', permissionMode: 'default' });
+    const it = run.events[Symbol.asyncIterator]();
+    const first = await it.next();
+    expect(first.value).toMatchObject({ type: 'permission_request', id: 'tu-1', toolName: 'Bash' });
+    run.respondPermission!('tu-1', 'allow');
+    const second = await it.next();
+    expect(second.value).toMatchObject({ type: 'text' });
+    expect((second.value as { delta: string }).delta).toContain('"behavior":"allow"');
+  });
+
+  it('auto-denies a parked permission when the run is stopped', async () => {
+    const adapter = new ClaudeSdkAdapter({ queryFn: approvalQuery() });
+    const run = adapter.run({ runId: 'r', prompt: 'p', cwd: '/w', permissionMode: 'default' });
+    const it = run.events[Symbol.asyncIterator]();
+    await it.next(); // permission_request
+    await run.stop();
+    const rest: string[] = [];
+    for (let n = await it.next(); !n.done; n = await it.next()) rest.push(n.value.type);
+    // The parked promise resolved to deny (not hung); stream terminates.
+    expect(rest.some((t) => t === 'text' || t === 'error' || t === 'done')).toBe(true);
+  });
+});
