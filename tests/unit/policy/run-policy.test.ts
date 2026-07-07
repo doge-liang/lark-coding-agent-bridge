@@ -37,7 +37,7 @@ describe('run policy', () => {
   });
 
   it.each([
-    ['full', 'danger-full-access', 'bypassPermissions'],
+    ['full', 'danger-full-access', 'auto'],
     ['workspace', 'workspace-write', 'acceptEdits'],
     ['read-only', 'read-only', 'plan'],
   ] as const)(
