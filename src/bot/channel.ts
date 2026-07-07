@@ -16,7 +16,7 @@ import {
 import type { AgentAdapter, AgentEvent } from '../agent/types';
 import { ApprovalCardTracker } from '../card/approval-card';
 import { handleCardAction } from '../card/dispatcher';
-import { sendManagedCard, updateManagedCard } from '../card/managed';
+import { sendManagedCard, updateManagedCard, forgetManagedCard } from '../card/managed';
 import { CallbackAuth } from '../card/callback-auth';
 import { CallbackNonceStore } from '../card/callback-store';
 import { renderCard } from '../card/run-renderer';
@@ -84,7 +84,7 @@ const markdownStreamHealth = new AsyncLocalStorage<MarkdownStreamHealth>();
 const BRIDGE_AGENT_INSTRUCTIONS = [
   '你在 bridge 进程中运行，普通 lark-cli 会继承 LARK_CHANNEL=1 并进入 bridge-bound 模式。',
   '不要 unset LARK_CHANNEL / LARK_CHANNEL_HOME / LARK_CHANNEL_PROFILE / LARKSUITE_CLI_CONFIG_DIR，也不要用 env -u LARK_CHANNEL 绕回本机普通配置。',
-  'Codex bridge 默认使用 danger-full-access 对齐 Claude bridge 的 bypassPermissions 行为，因此 lark-cli 应能像用户本机终端一样访问 keychain。',
+  'Codex bridge 默认使用 danger-full-access；Claude bridge 的权限按配置的 permission mode 处理（默认 auto：分类器放行常规操作，敏感操作弹审批卡升级），full 模式下依然拥有广泛访问权限，因此 lark-cli 应能像用户本机终端一样访问 keychain。',
   '如果提示 lark-channel context detected but not bound，停止当前操作并请用户重启 bridge 或运行 bridge doctor/preflight；不要改用普通 profile，不要自行 bind，也不要直接读取 config.json 里的账号或密钥。',
 ];
 
@@ -854,7 +854,14 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         const { messageId } = await sendManagedCard(channel, chatId, card, sendOpts);
         return { messageId };
       },
-      update: (messageId, card) => updateManagedCard(channel, messageId, card),
+      update: async (messageId, card) => {
+        // The tracker updates each approval card exactly once, to its terminal
+        // state, then never touches it again. Forget the managed-map entry after
+        // that terminal render lands so it doesn't leak. If the update throws we
+        // keep the entry (a retry is impossible anyway; keeping it is harmless).
+        await updateManagedCard(channel, messageId, card);
+        forgetManagedCard(messageId);
+      },
     },
     {
       timeoutMinutes: approvalTimeoutMinutes,
