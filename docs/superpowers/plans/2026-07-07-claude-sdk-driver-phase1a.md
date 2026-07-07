@@ -871,6 +871,7 @@ import { classifyTool } from './permission-policy';
       onAbort: () => void;
     }
     const pending = new Map<string, Pending>();
+    let permCounter = 0; // monotonic; never reuse an id even after entries settle
     const settle = (
       id: string,
       result: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string },
@@ -892,7 +893,11 @@ import { classifyTool } from './permission-policy';
             ctx: { signal: AbortSignal; title?: string; displayName?: string; description?: string; toolUseID?: string },
           ): Promise<{ behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string }> => {
             if (classifyTool(toolName) === 'auto-allow') return { behavior: 'allow' };
-            const id = ctx.toolUseID ?? `perm-${pending.size + 1}`;
+            // A run stopped before this prompt arrived: deny synchronously. The
+            // abort listener below would attach to an already-fired signal and
+            // never run, leaving the permission parked until timeout.
+            if (controller.signal.aborted) return { behavior: 'deny', message: 'run stopped' };
+            const id = ctx.toolUseID ?? `perm-${++permCounter}`;
             pushEvent({
               type: 'permission_request',
               id,
