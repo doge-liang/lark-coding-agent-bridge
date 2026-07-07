@@ -186,9 +186,17 @@ describe('ClaudeSdkAdapter interactive approval', () => {
     const first = await it.next();
     expect(first.value).toMatchObject({ type: 'permission_request', id: 'tu-1', toolName: 'Bash' });
     run.respondPermission!('tu-1', 'allow');
-    const second = await it.next();
-    expect(second.value).toMatchObject({ type: 'text' });
-    expect((second.value as { delta: string }).delta).toContain('"behavior":"allow"');
+    // settle() now also emits a permission_resolved event ahead of the text,
+    // so scan forward for the decision text rather than assuming it is next.
+    let text: { type: string; delta?: string } | undefined;
+    for (let n = await it.next(); !n.done; n = await it.next()) {
+      if (n.value.type === 'text') {
+        text = n.value;
+        break;
+      }
+    }
+    expect(text).toMatchObject({ type: 'text' });
+    expect(text?.delta).toContain('"behavior":"allow"');
   });
 
   it('auto-denies a parked permission when the run is stopped', async () => {
@@ -271,6 +279,56 @@ describe('ClaudeSdkAdapter interactive approval', () => {
       new Promise<{ kind: 'timeout' }>((resolve) => setTimeout(() => resolve({ kind: 'timeout' }), 200)),
     ]);
     expect(race).toEqual({ kind: 'resolved', value: { behavior: 'deny', message: 'run stopped' } });
+  });
+
+  describe('permission_resolved emission', () => {
+    it('emits user-reason after respondPermission', async () => {
+      const adapter = new ClaudeSdkAdapter({ queryFn: approvalQuery(), approvalEnabled: true });
+      const run = adapter.run({ runId: 'r', prompt: 'p', cwd: '/w', permissionMode: 'default' });
+      const it2 = run.events[Symbol.asyncIterator]();
+      const first = await it2.next(); // permission_request
+      expect(first.value).toMatchObject({ type: 'permission_request', id: 'tu-1' });
+      run.respondPermission!('tu-1', 'allow');
+      const collected: string[] = [];
+      for (let n = await it2.next(); !n.done; n = await it2.next()) {
+        collected.push(JSON.stringify(n.value));
+      }
+      expect(
+        collected.some(
+          (s) => s.includes('"permission_resolved"') && s.includes('"user"') && s.includes('"allow"'),
+        ),
+      ).toBe(true);
+    });
+
+    it('emits timeout-reason when the park times out', async () => {
+      const adapter = new ClaudeSdkAdapter({
+        queryFn: approvalQuery(),
+        approvalEnabled: true,
+        permissionTimeoutMs: 20,
+      });
+      const run = adapter.run({ runId: 'r', prompt: 'p', cwd: '/w', permissionMode: 'default' });
+      const events: string[] = [];
+      for await (const e of run.events) events.push(JSON.stringify(e));
+      expect(
+        events.some(
+          (s) => s.includes('"permission_resolved"') && s.includes('"timeout"') && s.includes('"deny"'),
+        ),
+      ).toBe(true);
+    });
+
+    it('emits aborted-reason when stopped mid-park', async () => {
+      const adapter = new ClaudeSdkAdapter({ queryFn: approvalQuery(), approvalEnabled: true });
+      const run = adapter.run({ runId: 'r', prompt: 'p', cwd: '/w', permissionMode: 'default' });
+      const it2 = run.events[Symbol.asyncIterator]();
+      await it2.next(); // permission_request
+      await run.stop();
+      const rest: string[] = [];
+      for (let n = await it2.next(); !n.done; n = await it2.next()) rest.push(JSON.stringify(n.value));
+      // The abort force-resolve settles before the queue closes, so the event
+      // is observable on the raw adapter stream (run-executor truncation is a
+      // consumer-side concern covered by the channel sweep in Task 6).
+      expect(rest.some((s) => s.includes('"permission_resolved"') && s.includes('"aborted"'))).toBe(true);
+    });
   });
 
   it('denies prompted tools immediately when approvalEnabled is not set (no permission_request, no park)', async () => {

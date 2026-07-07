@@ -140,6 +140,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
     const settle = (
       id: string,
       result: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string },
+      reason: 'user' | 'timeout' | 'aborted',
     ): void => {
       const p = pending.get(id);
       if (!p) return;
@@ -147,6 +148,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
       clearTimeout(p.timer);
       controller.signal.removeEventListener('abort', p.onAbort);
       p.resolve(result);
+      pushEvent({ type: 'permission_resolved', id, decision: result.behavior, reason });
     };
 
     // Bypass mode never prompts (allowDangerouslySkipPermissions is set above),
@@ -180,9 +182,9 @@ export class ClaudeSdkAdapter implements AgentAdapter {
               description: ctx.description,
             });
             return new Promise((resolve) => {
-              const onAbort = (): void => settle(id, { behavior: 'deny', message: 'run stopped' });
+              const onAbort = (): void => settle(id, { behavior: 'deny', message: 'run stopped' }, 'aborted');
               const timer = setTimeout(
-                () => settle(id, { behavior: 'deny', message: 'approval timed out' }),
+                () => settle(id, { behavior: 'deny', message: 'approval timed out' }, 'timeout'),
                 this.permissionTimeoutMs,
               );
               controller.signal.addEventListener('abort', onAbort);
@@ -227,7 +229,8 @@ export class ClaudeSdkAdapter implements AgentAdapter {
           );
         }
         // Force-resolve any parked permission so canUseTool callers unblock.
-        for (const id of [...pending.keys()]) settle(id, { behavior: 'deny', message: 'run ended' });
+        for (const id of [...pending.keys()])
+          settle(id, { behavior: 'deny', message: 'run ended' }, 'aborted');
         markFinished();
         closeQueue();
       }
@@ -280,6 +283,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
           decision === 'allow'
             ? { behavior: 'allow', updatedInput: respOpts?.updatedInput }
             : { behavior: 'deny', message: respOpts?.message ?? 'denied by user' },
+          'user',
         );
       },
     };

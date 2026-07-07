@@ -32,6 +32,12 @@ export type AgentEvent =
       title?: string;
       displayName?: string;
       description?: string;
+    }
+  | {
+      type: 'permission_resolved';
+      id: string;
+      decision: 'allow' | 'deny';
+      reason: 'user' | 'timeout' | 'aborted';
     };
 
 export const CLAUDE_DEFAULT_PERMISSION_MODE: ClaudePermissionMode = 'bypassPermissions';

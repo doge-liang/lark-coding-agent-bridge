@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyTool } from '../../../../src/agent/claude/permission-policy.js';
+import { classifyTool, SAFE_READONLY_TOOLS } from '../../../../src/agent/claude/permission-policy.js';
 
 describe('classifyTool', () => {
   it('auto-allows known read-only tools', () => {
@@ -12,5 +12,11 @@ describe('classifyTool', () => {
     for (const t of ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'mcp__x__y', 'SomethingNew']) {
       expect(classifyTool(t)).toBe('prompt');
     }
+  });
+
+  it('pins the exact whitelist contents', () => {
+    expect([...SAFE_READONLY_TOOLS].sort()).toEqual(
+      ['Glob', 'Grep', 'LS', 'NotebookRead', 'Read', 'TodoWrite'].sort(),
+    );
   });
 });
