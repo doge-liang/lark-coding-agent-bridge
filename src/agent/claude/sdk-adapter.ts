@@ -4,6 +4,7 @@ import { mergeProcessEnv } from '../../platform/spawn';
 import { buildBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
+import { classifyTool } from './permission-policy';
 import {
   CLAUDE_DEFAULT_PERMISSION_MODE,
   type AgentAdapter,
@@ -105,6 +106,69 @@ export class ClaudeSdkAdapter implements AgentAdapter {
       permissionMode,
     });
 
+    // Merge two producers into one AgentEvent stream: the SDK message loop and
+    // the canUseTool permission prompts. A tiny push/waiter queue serializes them.
+    const queue: AgentEvent[] = [];
+    const waiters = new Set<() => void>();
+    let closed = false;
+    const pushEvent = (evt: AgentEvent): void => {
+      queue.push(evt);
+      for (const w of [...waiters]) w();
+    };
+    const closeQueue = (): void => {
+      closed = true;
+      for (const w of [...waiters]) w();
+    };
+
+    interface Pending {
+      resolve: (r: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string }) => void;
+      timer: ReturnType<typeof setTimeout>;
+      onAbort: () => void;
+    }
+    const pending = new Map<string, Pending>();
+    const settle = (
+      id: string,
+      result: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string },
+    ): void => {
+      const p = pending.get(id);
+      if (!p) return;
+      pending.delete(id);
+      clearTimeout(p.timer);
+      controller.signal.removeEventListener('abort', p.onAbort);
+      p.resolve(result);
+    };
+
+    const canUseTool =
+      permissionMode === 'bypassPermissions'
+        ? undefined
+        : async (
+            toolName: string,
+            input: Record<string, unknown>,
+            ctx: { signal: AbortSignal; title?: string; displayName?: string; description?: string; toolUseID?: string },
+          ): Promise<{ behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string }> => {
+            if (classifyTool(toolName) === 'auto-allow') return { behavior: 'allow' };
+            const id = ctx.toolUseID ?? `perm-${pending.size + 1}`;
+            pushEvent({
+              type: 'permission_request',
+              id,
+              toolName,
+              input,
+              title: ctx.title,
+              displayName: ctx.displayName,
+              description: ctx.description,
+            });
+            return new Promise((resolve) => {
+              const onAbort = (): void => settle(id, { behavior: 'deny', message: 'run stopped' });
+              const timer = setTimeout(
+                () => settle(id, { behavior: 'deny', message: 'approval timed out' }),
+                this.permissionTimeoutMs,
+              );
+              controller.signal.addEventListener('abort', onAbort);
+              pending.set(id, { resolve, timer, onAbort });
+            });
+          };
+    if (canUseTool) options.canUseTool = canUseTool;
+
     const q = this.queryFn({ prompt: opts.prompt, options });
     let finished = false;
     const exitWaiters = new Set<() => void>();
@@ -113,31 +177,55 @@ export class ClaudeSdkAdapter implements AgentAdapter {
       for (const w of [...exitWaiters]) w();
     };
 
-    const events = (async function* (): AsyncGenerator<AgentEvent> {
+    // Drain the SDK stream into the shared queue.
+    void (async () => {
       let sawTerminal = false;
       try {
         for await (const msg of q) {
           for (const evt of translateSdkMessage(msg)) {
             if (evt.type === 'done' || evt.type === 'error') sawTerminal = true;
-            yield evt;
+            pushEvent(evt);
           }
         }
       } catch (err) {
         if (!sawTerminal) {
           sawTerminal = true;
-          yield {
+          pushEvent({
             type: 'error',
             message: `claude sdk error: ${err instanceof Error ? err.message : String(err)}`,
             terminationReason: controller.signal.aborted ? 'interrupted' : 'failed',
-          };
+          });
         }
       } finally {
+        if (!sawTerminal) {
+          pushEvent(
+            controller.signal.aborted
+              ? { type: 'error', message: 'claude run interrupted', terminationReason: 'interrupted' }
+              : { type: 'done', terminationReason: 'normal' },
+          );
+        }
+        // Force-resolve any parked permission so canUseTool callers unblock.
+        for (const id of [...pending.keys()]) settle(id, { behavior: 'deny', message: 'run ended' });
         markFinished();
+        closeQueue();
       }
-      if (!sawTerminal) {
-        yield controller.signal.aborted
-          ? { type: 'error', message: 'claude run interrupted', terminationReason: 'interrupted' }
-          : { type: 'done', terminationReason: 'normal' };
+    })();
+
+    const events = (async function* (): AsyncGenerator<AgentEvent> {
+      let i = 0;
+      for (;;) {
+        if (i < queue.length) {
+          yield queue[i++]!;
+          continue;
+        }
+        if (closed) return;
+        await new Promise<void>((resolve) => {
+          const wake = (): void => {
+            waiters.delete(wake);
+            resolve();
+          };
+          waiters.add(wake);
+        });
       }
     })();
 
@@ -163,6 +251,14 @@ export class ClaudeSdkAdapter implements AgentAdapter {
           }, timeoutMs);
           exitWaiters.add(done);
         });
+      },
+      respondPermission(id, decision, respOpts) {
+        settle(
+          id,
+          decision === 'allow'
+            ? { behavior: 'allow', updatedInput: respOpts?.updatedInput }
+            : { behavior: 'deny', message: respOpts?.message ?? 'denied by user' },
+        );
       },
     };
   }
