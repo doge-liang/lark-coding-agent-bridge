@@ -536,9 +536,14 @@ export function createRuntimeAgent(
       larkChannel,
     });
   }
+  const claude = profileConfig.claude;
   return new ClaudeSdkAdapter({
     larkChannel,
-    ...(profileConfig.claude?.env ? { env: profileConfig.claude.env } : {}),
+    approvalEnabled: true,
+    ...(claude?.env ? { env: claude.env } : {}),
+    ...(claude?.approvalTimeoutMinutes
+      ? { permissionTimeoutMs: claude.approvalTimeoutMinutes * 60_000 }
+      : {}),
   });
 }
 
