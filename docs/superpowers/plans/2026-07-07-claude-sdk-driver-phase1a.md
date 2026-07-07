@@ -20,6 +20,15 @@
 
 ---
 
+## Post-review amendments (applied during execution)
+
+These landed after the per-task and whole-branch reviews; they are already in the code and supersede any earlier sketch above.
+
+1. **Env seeding (auth invariant).** The SDK **replaces** the subprocess env with `options.env` (it does not merge with `process.env`). The adapter therefore seeds `process.env` first: `mergeProcessEnv(mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)), this.env)`. Precedence: `process.env` < lark-channel env < profile `env`.
+2. **Interactive approval is opt-in (`approvalEnabled`).** `permissionMode !== 'bypassPermissions'` does **not** imply a live approval consumer exists. The adapter takes an `approvalEnabled?: boolean` option (default `false`). Decision order in `canUseTool` (attached only for non-bypass modes): auto-allow safe tools → if `!approvalEnabled` **deny immediately** (parity with the old headless immediate-deny; no `permission_request`, no park) → abort guard → park + emit `permission_request`. Production `createRuntimeAgent` leaves it `false`, so non-`full` profiles deny prompted tools immediately rather than hanging 5 minutes.
+   - **Phase 1b handoff:** the Lark card/channel consumer must construct the adapter with `approvalEnabled: true`, and must render/answer `permission_request` using its `title` / `displayName` / `description` fields (the SDK-derived shape the code uses), replying via `respondPermission(id, 'allow' | 'deny', opts?)`.
+3. **`ProfileConfig` has no `claude` field**, so the `profileConfig.claude?.env` spread in the Task 6 sketch was dropped; production uses `new ClaudeSdkAdapter({ larkChannel })`. Wiring a `claude?: ClaudeConfig{ env }` profile field (to inject e.g. `CLAUDE_CODE_OAUTH_TOKEN`) is a separate follow-up; the adapter already accepts an `env` option.
+
 ## File Structure
 
 - Create `src/agent/claude/sdk-translate.ts` — 纯函数 `translateSdkMessage(msg): AgentEvent[]`，把 `SDKMessage` 映射为现有 `AgentEvent`。取代 `stream-json.ts` 的职责。
