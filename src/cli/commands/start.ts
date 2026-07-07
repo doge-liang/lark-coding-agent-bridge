@@ -3,7 +3,7 @@ import os from 'node:os';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 import pkg from '../../../package.json';
-import { ClaudeAdapter } from '../../agent/claude/adapter';
+import { ClaudeSdkAdapter } from '../../agent/claude/sdk-adapter';
 import { CodexAdapter } from '../../agent/codex/adapter';
 import {
   AgentPreflightError,
@@ -536,7 +536,7 @@ export function createRuntimeAgent(
       larkChannel,
     });
   }
-  return new ClaudeAdapter({
+  return new ClaudeSdkAdapter({
     larkChannel,
     ...(profileConfig.claude?.env ? { env: profileConfig.claude.env } : {}),
   });
