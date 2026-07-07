@@ -44,6 +44,11 @@ export interface CodexConfig {
   ignoreRules?: boolean;
 }
 
+export interface ClaudeConfig {
+  env?: Record<string, string>;
+  approvalTimeoutMinutes?: number;
+}
+
 export interface AttachmentConfig {
   maxCount: number;
   maxBytes: number;
@@ -90,6 +95,7 @@ export interface ProfileConfig {
   permissions: PermissionConfig;
   permissionSource?: PermissionSource;
   codex?: CodexConfig;
+  claude?: ClaudeConfig;
   attachments: AttachmentConfig;
   comments: CommentConfig;
   larkCli: LarkCliConfig;
@@ -150,6 +156,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     sandbox?: Partial<SandboxConfig>;
     permissions?: Partial<PermissionConfig>;
     codex?: CodexConfig & { flags?: unknown };
+    claude?: unknown;
     attachments?: Partial<AttachmentConfig>;
     comments?: unknown;
     larkCli?: unknown;
@@ -192,6 +199,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     permissions,
     permissionSource,
     ...(raw.codex ? { codex: normalizeCodex(raw.codex) } : {}),
+    ...(raw.claude !== undefined ? { claude: normalizeClaude(raw.claude) } : {}),
     attachments: {
       maxCount: numberOr(raw.attachments?.maxCount, 10),
       maxBytes: numberOr(raw.attachments?.maxBytes, 100 * 1024 * 1024),
@@ -283,6 +291,48 @@ function normalizeCodex(input: CodexConfig & { flags?: unknown }): CodexConfig {
     ignoreRules: input.ignoreRules !== false,
   };
   return codex;
+}
+
+function normalizeClaude(input: unknown): ClaudeConfig {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('invalid claude config');
+  }
+  const raw = input as { env?: unknown; approvalTimeoutMinutes?: unknown };
+  const env = normalizeClaudeEnv(raw.env);
+  const approvalTimeoutMinutes = normalizeApprovalTimeout(raw.approvalTimeoutMinutes);
+  const out: ClaudeConfig = {
+    ...(env ? { env } : {}),
+    ...(approvalTimeoutMinutes !== undefined ? { approvalTimeoutMinutes } : {}),
+  };
+  return out;
+}
+
+function normalizeClaudeEnv(input: unknown): Record<string, string> | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('invalid claude.env config');
+  }
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    const normalizedKey = key.trim();
+    if (!normalizedKey || /[\0=\r\n]/.test(normalizedKey)) {
+      throw new Error('invalid claude.env key');
+    }
+    if (value === undefined || value === null) continue;
+    const normalizedValue = String(value);
+    if (!normalizedValue) continue;
+    env[normalizedKey] = normalizedValue;
+  }
+  return Object.keys(env).length > 0 ? env : undefined;
+}
+
+function normalizeApprovalTimeout(input: unknown): number | undefined {
+  if (input === undefined || input === null) return undefined;
+  const n = Number(input);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error('invalid claude.approvalTimeoutMinutes');
+  }
+  return n;
 }
 
 function normalizeComments(_input: unknown): CommentConfig {
