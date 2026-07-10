@@ -197,6 +197,38 @@ describe('ClaudeSdkAdapter interactive approval', () => {
     }
     expect(text).toMatchObject({ type: 'text' });
     expect(text?.delta).toContain('"behavior":"allow"');
+    // Regression: the SDK requires updatedInput (a record) on allow, else it
+    // rejects with a ZodError and the tool never runs. Approvers don't rewrite
+    // args, so the adapter must backfill the original tool input.
+    expect(text?.delta).toContain('"updatedInput":{"command":"rm -rf x"}');
+  });
+
+  it('backfills updatedInput on an auto-allowed read-only tool', async () => {
+    // Auto-allow path (no parking): must also carry updatedInput or the SDK
+    // ZodErrors on the allow result.
+    const readQuery = ((params: { options?: Record<string, unknown> }) => {
+      const canUseTool = params.options?.canUseTool as
+        | ((n: string, i: unknown, o: { signal: AbortSignal; toolUseID: string }) => Promise<unknown>)
+        | undefined;
+      const iterable = (async function* () {
+        const controller = params.options?.abortController as AbortController;
+        const decision = await canUseTool!('Read', { file_path: '/w/x.txt' }, {
+          signal: controller.signal,
+          toolUseID: 'tu-read',
+        });
+        yield { type: 'assistant', session_id: 's', message: { content: [{ type: 'text', text: JSON.stringify(decision) }] } };
+        yield { type: 'result', subtype: 'success', session_id: 's' };
+      })();
+      return Object.assign(iterable, { interrupt: async () => {} });
+    }) as never;
+    const adapter = new ClaudeSdkAdapter({ queryFn: readQuery, approvalEnabled: true });
+    const run = adapter.run({ runId: 'r', prompt: 'p', cwd: '/w', permissionMode: 'default' });
+    let text: { type: string; delta?: string } | undefined;
+    for await (const evt of run.events) {
+      if (evt.type === 'text') { text = evt; break; }
+    }
+    expect(text?.delta).toContain('"behavior":"allow"');
+    expect(text?.delta).toContain('"updatedInput":{"file_path":"/w/x.txt"}');
   });
 
   it('auto-denies a parked permission when the run is stopped', async () => {
@@ -365,7 +397,9 @@ describe('ClaudeSdkAdapter interactive approval', () => {
     const run = adapter.run({ runId: 'r', prompt: 'p', cwd: '/w', permissionMode: 'default' });
     const events = await collect(run.events);
 
-    expect(readDecision).toEqual({ behavior: 'allow' });
+    // Auto-allow must carry updatedInput (the original tool input) so the SDK's
+    // allow schema accepts it — a bare { behavior: 'allow' } ZodErrors.
+    expect(readDecision).toEqual({ behavior: 'allow', updatedInput: { file_path: '/w/a.txt' } });
     expect(bashDecision).toEqual({ behavior: 'deny', message: 'interactive approval not available' });
     expect(events.some((e) => e.type === 'permission_request')).toBe(false);
   });

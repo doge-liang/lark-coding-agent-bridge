@@ -144,6 +144,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
       resolve: (r: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string }) => void;
       timer: ReturnType<typeof setTimeout>;
       onAbort: () => void;
+      input: Record<string, unknown>;
     }
     const pending = new Map<string, Pending>();
     let permCounter = 0;
@@ -157,8 +158,17 @@ export class ClaudeSdkAdapter implements AgentAdapter {
       pending.delete(id);
       clearTimeout(p.timer);
       controller.signal.removeEventListener('abort', p.onAbort);
-      p.resolve(result);
-      pushEvent({ type: 'permission_resolved', id, decision: result.behavior, reason });
+      // The SDK's allow result requires updatedInput to be a record (the input
+      // the tool runs with). Approvers don't rewrite args, so backfill the
+      // original tool input when none was supplied — otherwise the SDK rejects
+      // the allow with a ZodError (updatedInput: expected record, got undefined)
+      // and the tool never executes.
+      const resolved =
+        result.behavior === 'allow' && result.updatedInput === undefined
+          ? { ...result, updatedInput: p.input }
+          : result;
+      p.resolve(resolved);
+      pushEvent({ type: 'permission_resolved', id, decision: resolved.behavior, reason });
     };
 
     // Bypass mode never prompts (allowDangerouslySkipPermissions is set above),
@@ -176,7 +186,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
             input: Record<string, unknown>,
             ctx: { signal: AbortSignal; title?: string; displayName?: string; description?: string; toolUseID?: string },
           ): Promise<{ behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string }> => {
-            if (classifyTool(toolName) === 'auto-allow') return { behavior: 'allow' };
+            if (classifyTool(toolName) === 'auto-allow') return { behavior: 'allow', updatedInput: input };
             if (!this.approvalEnabled) {
               return { behavior: 'deny', message: 'interactive approval not available' };
             }
@@ -198,7 +208,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
                 this.permissionTimeoutMs,
               );
               controller.signal.addEventListener('abort', onAbort);
-              pending.set(id, { resolve, timer, onAbort });
+              pending.set(id, { resolve, timer, onAbort, input });
             });
           };
     if (canUseTool) options.canUseTool = canUseTool;
