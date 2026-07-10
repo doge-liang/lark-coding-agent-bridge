@@ -91,6 +91,21 @@ describe('ClaudeSdkAdapter system prompt wiring', () => {
       append: buildBridgeSystemPrompt(undefined),
     });
   });
+
+  it('isolates from on-disk settings so ambient permissions.allow cannot bypass canUseTool', async () => {
+    // Regression: with settingSources omitted the SDK loads ~/.claude/settings.json,
+    // whose permissions.allow list pre-approves Write/Bash and skips canUseTool —
+    // defeating the approval cards. The adapter must pin settingSources: [].
+    let captured: Record<string, unknown> | undefined;
+    const adapter = new ClaudeSdkAdapter({ queryFn: fakeQueryCapturing((o) => (captured = o)) });
+
+    const run = adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
+    for await (const _ of run.events) {
+      // drain to completion
+    }
+
+    expect(captured?.settingSources).toEqual([]);
+  });
 });
 
 describe('CodexAdapter system prompt wiring', () => {
