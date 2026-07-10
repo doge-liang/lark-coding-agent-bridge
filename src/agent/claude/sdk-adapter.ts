@@ -101,6 +101,16 @@ export class ClaudeSdkAdapter implements AgentAdapter {
         preset: 'claude_code',
         append: buildBridgeSystemPrompt(this.botIdentity),
       },
+      // Isolate from on-disk Claude Code settings. With settingSources omitted
+      // the SDK loads ~/.claude/settings.json (and project/local), whose
+      // permissions.allow list pre-approves tools like Write/Bash before the
+      // permission layer runs — the SDK then never calls canUseTool, so the
+      // bridge's approval cards never fire. The bridge owns its permission
+      // model via canUseTool + classifyTool, so it must not inherit any ambient
+      // allowlist. '[]' also drops CLAUDE.md auto-loading (would require
+      // 'project'); project context, if wanted, is injected via the appended
+      // system prompt, not via a settings source that could re-open this hole.
+      settingSources: [],
       permissionMode,
       env,
     };
