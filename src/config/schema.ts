@@ -137,6 +137,17 @@ export interface AppPreferences {
    * Range 100-30000; out-of-range values fall back to default.
    */
   agentStopGraceMs?: number;
+  /**
+   * OpenViking unified long-term memory (shared across claude / codex
+   * backends). `memoryEnabled` gates both prompt injection and run
+   * recording; toggled hot via `/ov memory on|off` — no restart needed.
+   * Server/model config itself lives in ov.conf, managed by `/ov`.
+   */
+  openviking?: {
+    memoryEnabled?: boolean;
+    /** OpenViking HTTP server base URL. Default http://127.0.0.1:1933. */
+    serverUrl?: string;
+  };
 }
 
 /**
@@ -244,6 +255,18 @@ export function getAgentStopGraceMs(cfg: AppConfig): number {
   const raw = cfg.preferences?.agentStopGraceMs;
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return 5000;
   return Math.min(30_000, Math.max(100, Math.floor(raw)));
+}
+
+/** Resolve the OpenViking memory-injection toggle. Default false (opt-in). */
+export function getOpenVikingMemoryEnabled(cfg: AppConfig): boolean {
+  return cfg.preferences?.openviking?.memoryEnabled === true;
+}
+
+/** Resolve the OpenViking server base URL with default fallback. */
+export function getOpenVikingServerUrl(cfg: AppConfig): string {
+  const raw = cfg.preferences?.openviking?.serverUrl;
+  if (typeof raw === 'string' && /^https?:\/\//.test(raw.trim())) return raw.trim();
+  return 'http://127.0.0.1:1933';
 }
 
 export function getRunIdleTimeoutMs(cfg: AppConfig): number | undefined {

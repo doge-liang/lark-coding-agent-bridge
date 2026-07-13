@@ -32,6 +32,8 @@ import {
   getAgentStopGraceMs,
   getMaxConcurrentRuns,
   getMessageReplyMode,
+  getOpenVikingMemoryEnabled,
+  getOpenVikingServerUrl,
   getRequireMentionInGroup,
   getRunIdleTimeoutMs,
   getShowToolCalls,
@@ -39,6 +41,7 @@ import {
 import { resolveAppSecret } from '../config/secret-resolver';
 import { log, reportMetric, withTrace } from '../core/logger';
 import { MediaCache, type LocalAttachment } from '../media/cache';
+import { createOpenVikingMemory, type OpenVikingMemory } from '../openviking/memory';
 import {
   toPolicyAttachment,
   toPromptAttachment,
@@ -181,6 +184,12 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // so /config bumps take effect for the next run.
   const pool = new ProcessPool(() => getMaxConcurrentRuns(controls.cfg));
   const executor = new RunExecutor({ agent, pool, activeRuns });
+  // OpenViking unified memory — settings are re-read per run so the
+  // `/ov memory on|off` toggle applies to the next run without a restart.
+  const memory = createOpenVikingMemory(() => ({
+    memoryEnabled: getOpenVikingMemoryEnabled(controls.cfg),
+    serverUrl: getOpenVikingServerUrl(controls.cfg),
+  }));
 
   // Resolve the App Secret to plaintext. The config field can be a literal
   // string, a "${VAR}" template, or a {source, id} SecretRef referencing
@@ -272,6 +281,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         await runAgentBatch({
           channel,
           executor,
+          memory,
           sessions,
           sessionCatalog,
           workspaces,
@@ -595,6 +605,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
 interface RunBatchDeps {
   channel: LarkChannel;
   executor: RunExecutor;
+  memory?: OpenVikingMemory;
   sessions: SessionStore;
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
@@ -611,6 +622,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const {
     channel,
     executor,
+    memory,
     sessions,
     sessionCatalog,
     workspaces,
@@ -709,6 +721,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     sessionCatalog,
     workspaces,
     executor,
+    memory,
     now: Date.now(),
     stopGraceMs: getAgentStopGraceMs(controls.cfg),
     observability: {

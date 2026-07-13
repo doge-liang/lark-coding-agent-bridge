@@ -33,8 +33,15 @@ import { GROUP_MSG_SCOPE, hasGroupMsgScope } from '../bot/app-scope';
 import { requestScopeGrantLink } from '../bot/wizard';
 import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/managed';
 import {
+  openvikingCancelledCard,
+  openvikingFailedCard,
+  openvikingFormCard,
+  openvikingSavedCard,
+} from '../card/openviking-card';
+import {
   helpCard,
   menuCard,
+  openvikingStatusCard,
   resumeCard,
   statusCard,
   usageCard,
@@ -46,6 +53,8 @@ import {
   getAgentStopGraceMs,
   getMaxConcurrentRuns,
   getMessageReplyMode,
+  getOpenVikingMemoryEnabled,
+  getOpenVikingServerUrl,
   getRequireMentionInGroup,
   getRunIdleTimeoutMs,
   getShowToolCalls,
@@ -111,6 +120,15 @@ import { createBoundChat, defaultChatName } from '../bot/group';
 import { fetchKnownChats, type KnownChat } from '../bot/lark-info';
 import { applyLarkCliIdentityPolicy, hasStructuredLarkCliUserAuth } from '../lark-cli/identity-policy';
 import { handleBunnyEntry, parseBunnyMenuAction } from '../bunny/agent/lark-entry';
+import {
+  getServiceStatus,
+  maskSecret,
+  readOvConf,
+  restartOpenViking,
+  writeOvConf,
+  type OvConf,
+  type OvProviderConf,
+} from '../openviking/service';
 
 export interface Controls {
   profile: string;
@@ -214,6 +232,7 @@ const handlers: Record<string, Handler> = {
   '/invite': handleInvite,
   '/remove': handleRemove,
   '/upgrade': handleUpgrade,
+  '/ov': handleOv,
 };
 
 const commandAliases = new Map<string, string>([
@@ -230,6 +249,7 @@ const commandAliases = new Map<string, string>([
   ['Codex 设置', '/codex-config'],
   ['Codex 配置', '/codex-config'],
   ['升级检查', '/upgrade check'],
+  ['记忆', '/ov'],
 ]);
 
 /**
@@ -250,6 +270,7 @@ const ADMIN_COMMANDS = new Set([
   '/invite',
   '/remove',
   '/upgrade',
+  '/ov',
 ]);
 
 function isAdminCommand(cmd: string): boolean {
@@ -2689,4 +2710,235 @@ function withClaudeModel(
   };
   if (!nextModel) delete next.model;
   return Object.keys(next).length > 0 ? next : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// /ov — OpenViking unified-memory service: status, ov.conf editing via a
+// form card (model providers + API keys), service restart, and the
+// memory-injection toggle. Admin-gated: it holds model keys and controls a
+// system service.
+
+async function handleOv(args: string, ctx: CommandContext): Promise<void> {
+  const [sub = '', ...rest] = args.trim().split(/\s+/);
+  switch (sub) {
+    case '':
+    case 'status':
+      return showOvStatus(ctx);
+    case 'form':
+      return showOvForm(ctx);
+    case 'submit':
+      return submitOv(ctx);
+    case 'cancel':
+      return cancelOv(ctx);
+    case 'restart':
+      return restartOv(ctx);
+    case 'memory':
+      return toggleOvMemory(ctx, rest[0] ?? '');
+    default:
+      await reply(ctx, '用法:`/ov [status|form|restart|memory on|off]`');
+  }
+}
+
+function ovProviderSummary(conf: OvProviderConf): string {
+  return `\`${conf.provider ?? '-'}\` / \`${conf.model || '(未设置)'}\`（Key ${maskSecret(conf.api_key)}）`;
+}
+
+async function showOvStatus(ctx: CommandContext): Promise<void> {
+  let conf: OvConf = {};
+  let confError: string | undefined;
+  try {
+    conf = await readOvConf();
+  } catch (err) {
+    confError = err instanceof Error ? err.message : String(err);
+  }
+  const status = await getServiceStatus(getOpenVikingServerUrl(ctx.controls.cfg));
+  const card = openvikingStatusCard({
+    unitState: status.unitState,
+    healthy: status.healthy,
+    memoryEnabled: getOpenVikingMemoryEnabled(ctx.controls.cfg),
+    embeddingSummary: ovProviderSummary(conf.embedding?.dense ?? {}),
+    vlmSummary: ovProviderSummary(conf.vlm ?? {}),
+    confError,
+  });
+  await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+}
+
+async function showOvForm(ctx: CommandContext): Promise<void> {
+  let conf: OvConf = {};
+  try {
+    conf = await readOvConf();
+  } catch {
+    // Malformed ov.conf: fall through with an empty form — submitting will
+    // rewrite the file wholesale, which is exactly the recovery path.
+  }
+  const card = openvikingFormCard({
+    embedding: conf.embedding?.dense ?? {},
+    vlm: conf.vlm ?? {},
+  });
+  if (ctx.fromCardAction) await recallMessage(ctx, ctx.msg.messageId);
+  await sendManagedCard(ctx.channel, ctx.msg.chatId, card);
+}
+
+async function cancelOv(ctx: CommandContext): Promise<void> {
+  if (ctx.fromCardAction) {
+    const formMsgId = ctx.msg.messageId;
+    void (async () => {
+      await new Promise((r) => setTimeout(r, FORM_SETTLE_MS));
+      await showResultCardInPlace(ctx, formMsgId, openvikingCancelledCard());
+    })();
+  }
+}
+
+async function submitOv(ctx: CommandContext): Promise<void> {
+  const fv = ctx.formValue ?? {};
+  const formMsgId = ctx.msg.messageId;
+
+  // Detach: same FORM_SETTLE_MS dance as /config — Lark locks the form while
+  // the cardAction handler runs, so the terminal card update must happen
+  // after this handler returns.
+  void (async () => {
+    const submittedAt = Date.now();
+    const waitForSettle = async (): Promise<void> => {
+      const elapsed = Date.now() - submittedAt;
+      if (elapsed < FORM_SETTLE_MS) {
+        await new Promise<void>((r) => setTimeout(r, FORM_SETTLE_MS - elapsed));
+      }
+    };
+    try {
+      const conf = await readOvConf().catch(() => ({}) as OvConf);
+      const embedding: OvProviderConf = {
+        input: 'multimodal',
+        dimension: 1024,
+        ...(conf.embedding?.dense ?? {}),
+      };
+      const vlm: OvProviderConf = { max_retries: 2, ...(conf.vlm ?? {}) };
+      applyOvFormFields(embedding, fv, 'embedding');
+      applyOvFormFields(vlm, fv, 'vlm');
+      const rawDimension = String(fv.embedding_dimension ?? '').trim();
+      const parsedDimension = Number(rawDimension);
+      if (Number.isFinite(parsedDimension) && parsedDimension > 0) {
+        embedding.dimension = Math.floor(parsedDimension);
+      }
+
+      const next: OvConf = {
+        ...conf,
+        server: conf.server ?? { host: '127.0.0.1', port: 1933 },
+        embedding: { ...(conf.embedding ?? {}), dense: embedding },
+        vlm,
+      };
+      await writeOvConf(next);
+
+      // The server refuses to boot on missing key/model — skip the restart
+      // and say so instead of showing a crash-loop journal.
+      const missing = [
+        ...(embedding.api_key ? [] : ['Embedding API Key']),
+        ...(embedding.model ? [] : ['Embedding 模型']),
+        ...(vlm.api_key ? [] : ['VLM API Key']),
+        ...(vlm.model ? [] : ['VLM 模型']),
+      ];
+      let restartOk = false;
+      let restartDetail: string;
+      if (missing.length > 0) {
+        restartDetail = `仍缺少必填项：${missing.join('、')}，服务未重启。补齐后再次提交即可。`;
+      } else {
+        ({ ok: restartOk, detail: restartDetail } = await restartOpenViking(
+          getOpenVikingServerUrl(ctx.controls.cfg),
+        ));
+      }
+      log.info('command', 'ov-saved', {
+        embeddingProvider: embedding.provider,
+        vlmProvider: vlm.provider,
+        restartOk,
+      });
+      await waitForSettle();
+      await showResultCardInPlace(
+        ctx,
+        formMsgId,
+        openvikingSavedCard({ embedding, vlm, restartOk, restartDetail }),
+      );
+    } catch (err) {
+      log.fail('command', err, { step: 'ov.save' });
+      reportMetric('command_fail', 1, { step: 'ov.save' });
+      await waitForSettle();
+      await showResultCardInPlace(
+        ctx,
+        formMsgId,
+        openvikingFailedCard(err instanceof Error ? err.message : String(err)),
+      );
+    }
+  })();
+}
+
+/** Overwrite provider/api_base/model from the form; api_key only when non-empty (blank = keep). */
+function applyOvFormFields(
+  target: OvProviderConf,
+  fv: Record<string, unknown>,
+  prefix: 'embedding' | 'vlm',
+): void {
+  const read = (field: string): string => String(fv[`${prefix}_${field}`] ?? '').trim();
+  const provider = read('provider');
+  if (provider) target.provider = provider;
+  const apiBase = read('api_base');
+  if (apiBase) target.api_base = apiBase;
+  if (Object.hasOwn(fv, `${prefix}_model`)) target.model = read('model');
+  const apiKey = read('api_key');
+  if (apiKey) target.api_key = apiKey;
+}
+
+async function restartOv(ctx: CommandContext): Promise<void> {
+  // Restart + health poll can take tens of seconds; blocking the cardAction
+  // handler that long risks Lark redelivering the callback (= double
+  // restart). Acknowledge first, then report the outcome as a new message.
+  await reply(ctx, '正在重启 openviking-server,请稍候…');
+  void (async () => {
+    const { ok, detail } = await restartOpenViking(getOpenVikingServerUrl(ctx.controls.cfg));
+    await reply(ctx, ok ? '✅ openviking-server 重启完成,健康检查通过。' : `❌ 重启失败：\n${detail}`);
+  })().catch((err) => {
+    log.fail('command', err, { step: 'ov.restart' });
+    reportMetric('command_fail', 1, { step: 'ov.restart' });
+  });
+}
+
+async function toggleOvMemory(ctx: CommandContext, arg: string): Promise<void> {
+  if (arg !== 'on' && arg !== 'off') {
+    await reply(ctx, '用法:`/ov memory on|off`');
+    return;
+  }
+  const memoryEnabled = arg === 'on';
+  await saveOpenVikingPreferences(ctx, {
+    ...(ctx.controls.cfg.preferences?.openviking ?? {}),
+    memoryEnabled,
+  });
+  log.info('command', 'ov-memory-toggled', { memoryEnabled });
+  // Re-render the status card so the toggle is visible where it was clicked.
+  await showOvStatus(ctx);
+}
+
+async function saveOpenVikingPreferences(
+  ctx: CommandContext,
+  openviking: NonNullable<AppPreferences['openviking']>,
+): Promise<void> {
+  await withConfigFileLock(ctx.controls.configPath, async () => {
+    const root = await loadRootConfig(ctx.controls.configPath);
+    if (!root) {
+      ctx.controls.cfg.preferences = {
+        ...(ctx.controls.cfg.preferences ?? {}),
+        openviking,
+      };
+      await saveConfig(ctx.controls.cfg, ctx.controls.configPath);
+      return;
+    }
+    const profile = root.profiles[ctx.controls.profile];
+    if (!profile) throw new Error(`profile not found: ${ctx.controls.profile}`);
+    root.profiles[ctx.controls.profile] = {
+      ...profile,
+      preferences: {
+        ...profile.preferences,
+        openviking,
+      },
+    };
+    await saveRootConfig(root, ctx.controls.configPath);
+    ctx.controls.profileConfig = root.profiles[ctx.controls.profile]!;
+    ctx.controls.cfg = runtimeProfileConfig(root, ctx.controls.profile);
+  });
 }
