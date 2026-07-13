@@ -6,7 +6,7 @@ export interface OvFormOpts {
   vlm: OvProviderConf;
 }
 
-const EMBEDDING_PROVIDERS = ['volcengine', 'openai'] as const;
+const EMBEDDING_PROVIDERS = ['volcengine', 'dashscope', 'openai'] as const;
 const VLM_PROVIDERS = ['volcengine', 'openai', 'kimi', 'glm'] as const;
 
 function providerSelect(
@@ -14,12 +14,15 @@ function providerSelect(
   current: string | undefined,
   providers: readonly string[],
 ): object {
-  const initial = providers.includes(current ?? '') ? current : providers[0];
+  // A hand-edited ov.conf may use a provider outside the preset list (e.g.
+  // 'jina'); keep it selectable so a no-touch submit doesn't rewrite it.
+  const values =
+    current && !providers.includes(current) ? [current, ...providers] : [...providers];
   return {
     tag: 'select_static',
     name,
-    initial_option: initial,
-    options: providers.map((value) => ({
+    initial_option: current && values.includes(current) ? current : values[0],
+    options: values.map((value) => ({
       text: { tag: 'plain_text', content: value },
       value,
     })),
