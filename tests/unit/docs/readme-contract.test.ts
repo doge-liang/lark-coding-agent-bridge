@@ -115,6 +115,15 @@ describe('README runtime contract', () => {
     expect(docs).not.toContain('发送 `/bunny`');
     expect(docs).not.toContain('lark-channel-bridge bunny serve');
   });
+
+  it('documents only the supported command aliases', async () => {
+    const docs = await readDocs();
+
+    expect(docs).toContain('`/update apply` | Exact alias for `/upgrade apply`');
+    expect(docs).toContain('`/update apply` | `/upgrade apply` 的精确别名');
+    expect(docs).toContain('| `新会话` | `/new` |');
+    expect(docs).not.toContain('| `新对话` | `/new` |');
+  });
 });
 
 async function readDocs(): Promise<string> {
