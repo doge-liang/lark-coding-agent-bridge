@@ -167,9 +167,13 @@ describe('Claude slash command visible behavior', () => {
     expect(menu).toContain('飞书悬浮菜单');
     expect(menu).toContain('用量');
     expect(menu).toContain('/usage');
+    expect(menu).toContain('新会话');
+    expect(menu).not.toContain('新对话');
 
-    await expect(h.run('新对话')).resolves.toBe(true);
+    await expect(h.run('新会话')).resolves.toBe(true);
     expect(lastMarkdown(h.channel)).toBe('已开始新会话。');
+
+    await expect(h.run('新对话')).resolves.toBe(false);
 
     await expect(h.run('不是菜单命令')).resolves.toBe(false);
   });
