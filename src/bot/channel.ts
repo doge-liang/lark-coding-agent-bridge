@@ -4,6 +4,7 @@ import type {
   NormalizedMessage,
 } from '@larksuite/channel';
 import { createLarkChannel } from '@larksuite/channel';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { dirname, join } from 'node:path';
 import { claudeCapability, codexCapability } from '../agent/capability';
 import {
@@ -69,6 +70,12 @@ const STREAM_LIFECYCLE_FALLBACK_AFTER_MS = 9 * 60_000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
 const INTERRUPT_POLL_MS = 100;
 
+interface MarkdownStreamHealth {
+  updateFailed: boolean;
+}
+
+const markdownStreamHealth = new AsyncLocalStorage<MarkdownStreamHealth>();
+
 const BRIDGE_AGENT_INSTRUCTIONS = [
   '你在 bridge 进程中运行，普通 lark-cli 会继承 LARK_CHANNEL=1 并进入 bridge-bound 模式。',
   '不要 unset LARK_CHANNEL / LARK_CHANNEL_HOME / LARK_CHANNEL_PROFILE / LARKSUITE_CLI_CONFIG_DIR，也不要用 env -u LARK_CHANNEL 绕回本机普通配置。',
@@ -124,6 +131,10 @@ export function shouldSuppressSdkErrorLog(args: unknown[]): boolean {
   return args.some(isSuppressedSdkMessage);
 }
 
+export function isMarkdownStreamUpdateFailure(args: unknown[]): boolean {
+  return args.some((arg) => arg === '[stream] update failed');
+}
+
 function buildQuietLogger(): {
   error: (...m: unknown[]) => void;
   warn: (...m: unknown[]) => void;
@@ -136,7 +147,13 @@ function buildQuietLogger(): {
       if (shouldSuppressSdkErrorLog(args)) return;
       log.warn('sdk', 'error', { args: stringifyArgs(args) });
     },
-    warn: (...args: unknown[]) => log.warn('sdk', 'warn', { args: stringifyArgs(args) }),
+    warn: (...args: unknown[]) => {
+      if (isMarkdownStreamUpdateFailure(args)) {
+        const health = markdownStreamHealth.getStore();
+        if (health) health.updateFailed = true;
+      }
+      log.warn('sdk', 'warn', { args: stringifyArgs(args) });
+    },
     info: (...args: unknown[]) => log.info('sdk', 'info', { args: stringifyArgs(args) }),
     debug: () => {},
     trace: () => {},
@@ -850,47 +867,51 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         },
       });
     } else if (replyMode === 'markdown') {
-      let latestState: RunState = initialState;
-      let producerStarted = false;
-      let markdownCtrl: { setContent(markdown: string): Promise<void> } | undefined;
-      const renderDone = processAgentStream(
-        handle,
-        eventStream,
-        scope,
-        idleTimeoutMs,
-        recordSession,
-        async (state) => {
-          latestState = state;
-          if (markdownCtrl) {
-            await markdownCtrl.setContent(renderText(filterForPrefs(state)));
-          }
-        },
-      );
-      const streamStartedAtMs = Date.now();
-      const streamDone = channel.stream(
-        chatId,
-        {
-          markdown: async (ctrl) => {
-            producerStarted = true;
-            markdownCtrl = ctrl;
-            await ctrl.setContent(renderText(filterForPrefs(latestState)));
-            await renderDone;
+      const health: MarkdownStreamHealth = { updateFailed: false };
+      await markdownStreamHealth.run(health, async () => {
+        let latestState: RunState = initialState;
+        let producerStarted = false;
+        let markdownCtrl: { setContent(markdown: string): Promise<void> } | undefined;
+        const renderDone = processAgentStream(
+          handle,
+          eventStream,
+          scope,
+          idleTimeoutMs,
+          recordSession,
+          async (state) => {
+            latestState = state;
+            if (markdownCtrl) {
+              await markdownCtrl.setContent(renderText(filterForPrefs(state)));
+            }
           },
-        },
-        sendOpts,
-      );
-      await awaitRenderAwareStream({
-        mode: replyMode,
-        streamDone,
-        renderDone,
-        streamStartedAtMs,
-        producerStarted: () => producerStarted,
-        fallback: async (state) => {
-          const body = renderText(filterForPrefs(state));
-          if (body.trim()) {
-            await channel.send(chatId, { markdown: body }, sendOpts);
-          }
-        },
+        );
+        const streamStartedAtMs = Date.now();
+        const streamDone = channel.stream(
+          chatId,
+          {
+            markdown: async (ctrl) => {
+              producerStarted = true;
+              markdownCtrl = ctrl;
+              await ctrl.setContent(renderText(filterForPrefs(latestState)));
+              await renderDone;
+            },
+          },
+          sendOpts,
+        );
+        await awaitRenderAwareStream({
+          mode: replyMode,
+          streamDone,
+          renderDone,
+          streamStartedAtMs,
+          producerStarted: () => producerStarted,
+          streamUpdateFailed: () => health.updateFailed,
+          fallback: async (state) => {
+            const body = renderText(filterForPrefs(state));
+            if (body.trim()) {
+              await channel.send(chatId, { markdown: body }, sendOpts);
+            }
+          },
+        });
       });
     } else {
       // text mode: drain the agent stream without sending anything during
@@ -1077,6 +1098,7 @@ async function awaitRenderAwareStream(input: {
   renderDone: Promise<RunState>;
   streamStartedAtMs: number;
   producerStarted: () => boolean;
+  streamUpdateFailed?: () => boolean;
   fallback: (state: RunState) => Promise<void>;
 }): Promise<void> {
   const streamResult = input.streamDone.then(
@@ -1102,7 +1124,7 @@ async function awaitRenderAwareStream(input: {
   if (first.kind === 'stream') {
     const rendered = await renderResult;
     if (!rendered.ok) throw rendered.err;
-    await runLifecycleFallbackIfNeeded(input, rendered.state);
+    await runFinalFallbackIfNeeded(input, rendered.state);
     return;
   }
 
@@ -1136,25 +1158,33 @@ async function awaitRenderAwareStream(input: {
     return;
   }
   if (!terminal.ok) throw terminal.err;
-  await runLifecycleFallbackIfNeeded(input, first.state);
+  await runFinalFallbackIfNeeded(input, first.state);
 }
 
-async function runLifecycleFallbackIfNeeded(
+async function runFinalFallbackIfNeeded(
   input: {
     mode: 'card' | 'markdown';
     streamStartedAtMs: number;
+    streamUpdateFailed?: () => boolean;
     fallback: (state: RunState) => Promise<void>;
   },
   state: RunState,
 ): Promise<void> {
   const ageMs = Date.now() - input.streamStartedAtMs;
-  if (ageMs < STREAM_LIFECYCLE_FALLBACK_AFTER_MS) return;
+  const updateFailed = input.streamUpdateFailed?.() ?? false;
+  const lifecycleExpired = ageMs >= STREAM_LIFECYCLE_FALLBACK_AFTER_MS;
+  if (!updateFailed && !lifecycleExpired) return;
 
-  log.warn('stream', 'lifecycle-final-fallback', {
-    mode: input.mode,
-    ageMs,
-    thresholdMs: STREAM_LIFECYCLE_FALLBACK_AFTER_MS,
-  });
+  if (updateFailed) {
+    log.warn('stream', 'sdk-update-failed-fallback', { mode: input.mode });
+  }
+  if (lifecycleExpired) {
+    log.warn('stream', 'lifecycle-final-fallback', {
+      mode: input.mode,
+      ageMs,
+      thresholdMs: STREAM_LIFECYCLE_FALLBACK_AFTER_MS,
+    });
+  }
   await runFallbackReply(input.mode, state, input.fallback);
 }
 

@@ -340,6 +340,54 @@ describe('markdown stream startup failures', () => {
     expect(markdown).not.toContain('正在调用工具');
   });
 
+  it('sends final markdown when the SDK silently abandons stream updates', async () => {
+    let updateCount = 0;
+    let failureReported = false;
+    let producerCompleted = false;
+    const h = await createHarness({
+      agentEvents: [
+        [
+          { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'pwd' } },
+          { type: 'tool_result', id: 'tool-1', output: '/repo', isError: false },
+          { type: 'text', delta: '静默失败后仍应看到最终结果。' },
+          { type: 'done', terminationReason: 'normal' },
+        ],
+      ],
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          markdown?: (ctrl: { setContent(markdown: string): Promise<void> }) => Promise<void>;
+        }).markdown;
+        if (!producer) throw new Error('expected markdown stream input');
+        await producer({
+          setContent: async (): Promise<void> => {
+            updateCount++;
+            if (failureReported || updateCount < 2) return;
+            failureReported = true;
+            const opts = (sdkMock.createLarkChannel.mock.calls as unknown[][])[0]?.[0] as
+              | { logger?: { warn(...args: unknown[]): void } }
+              | undefined;
+            // @larksuite/channel catches this CardKit update failure, logs it,
+            // disables every later update, and still resolves channel.stream().
+            opts?.logger?.warn('[stream] update failed', new Error('CardKit HTTP 500'));
+          },
+        });
+        producerCompleted = true;
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_first', 'run a long tool chain'));
+
+    await waitFor(() => producerCompleted);
+    await waitFor(
+      () => h.channel.rawClient.im.v1.messageReaction.delete.mock.calls.length > 0,
+    );
+    expect(failureReported).toBe(true);
+    const markdown = lastMarkdown(h.channel);
+    expect(markdown).toContain('静默失败后仍应看到最终结果');
+    expect(markdown).not.toContain('正在调用工具');
+  });
+
   it('marks the card interrupted promptly when a silent tool run is stopped', async () => {
     const updates: unknown[] = [];
     let producerStarted = false;
