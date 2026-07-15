@@ -1,4 +1,4 @@
-import type { Block, RunState, ToolEntry } from './run-state';
+import { formatElapsedDuration, type Block, type RunState, type ToolEntry } from './run-state';
 import { toolHeaderText } from './tool-render';
 
 const MARKDOWN_STREAM_MAX_CHARS = 24_000;
@@ -30,7 +30,7 @@ export function renderText(state: RunState): string {
   } else if (state.terminal === 'error' && state.errorMsg) {
     parts.push(`⚠️ agent 失败:${state.errorMsg}`);
   } else if (state.terminal === 'running' && state.footer) {
-    parts.push(footerLine(state.footer));
+    parts.push(footerLine(state.footer, state.toolElapsedMs));
   }
 
   return fitMarkdown(parts);
@@ -53,9 +53,15 @@ function toolLine(tool: ToolEntry): string {
   return `> ${toolHeaderText(tool)}`;
 }
 
-function footerLine(status: 'thinking' | 'tool_running' | 'streaming'): string {
+function footerLine(
+  status: 'thinking' | 'tool_running' | 'streaming',
+  toolElapsedMs?: number,
+): string {
   if (status === 'thinking') return '_🧠 正在思考…_';
-  if (status === 'tool_running') return '_🧰 正在调用工具…_';
+  if (status === 'tool_running') {
+    const elapsed = toolElapsedMs ? ` 已运行 ${formatElapsedDuration(toolElapsedMs)}` : '';
+    return `_🧰 正在调用工具…${elapsed}_`;
+  }
   return '_✍️ 正在输出…_';
 }
 

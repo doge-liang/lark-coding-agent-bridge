@@ -21,6 +21,8 @@ export interface RunState {
   blocks: Block[];
   reasoning: { content: string; active: boolean };
   footer: FooterStatus;
+  /** Elapsed time for the oldest currently running tool, refreshed by a heartbeat. */
+  toolElapsedMs?: number;
   terminal: Terminal;
   errorMsg?: string;
   /** Set when terminal === 'idle_timeout' — how long claude was idle before
@@ -52,6 +54,7 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
           blocks: [...state.blocks.slice(0, -1), next],
           reasoning: { ...state.reasoning, active: false },
           footer: 'streaming',
+          toolElapsedMs: undefined,
         };
       }
       return {
@@ -59,6 +62,7 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
         blocks: [...state.blocks, { kind: 'text', content: evt.delta, streaming: true }],
         reasoning: { ...state.reasoning, active: false },
         footer: 'streaming',
+        toolElapsedMs: undefined,
       };
     }
 
@@ -67,6 +71,7 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
         ...state,
         reasoning: { content: state.reasoning.content + evt.delta, active: true },
         footer: 'thinking',
+        toolElapsedMs: undefined,
       };
     }
 
@@ -82,6 +87,7 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
         blocks: [...closeStreamingText(state.blocks), { kind: 'tool', tool }],
         reasoning: { ...state.reasoning, active: false },
         footer: 'tool_running',
+        toolElapsedMs: 0,
       };
     }
 
@@ -97,7 +103,7 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
           },
         };
       });
-      return { ...state, blocks };
+      return { ...state, blocks, toolElapsedMs: undefined };
     }
 
     case 'error': {
@@ -112,6 +118,7 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
         terminal,
         errorMsg: terminal === 'error' ? evt.message : state.errorMsg,
         footer: null,
+        toolElapsedMs: undefined,
       };
     }
 
@@ -128,12 +135,26 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
         reasoning: { ...state.reasoning, active: false },
         terminal,
         footer: null,
+        toolElapsedMs: undefined,
       };
     }
 
     default:
       return state;
   }
+}
+
+export function markToolHeartbeat(state: RunState, elapsedMs: number): RunState {
+  if (state.terminal !== 'running' || state.footer !== 'tool_running') return state;
+  return { ...state, toolElapsedMs: Math.max(0, elapsedMs) };
+}
+
+export function formatElapsedDuration(elapsedMs: number): string {
+  const totalSeconds = Math.max(1, Math.floor(elapsedMs / 1000));
+  if (totalSeconds < 60) return `${totalSeconds} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds === 0 ? `${minutes} 分钟` : `${minutes} 分 ${seconds} 秒`;
 }
 
 export function markInterrupted(state: RunState): RunState {
@@ -143,6 +164,7 @@ export function markInterrupted(state: RunState): RunState {
     reasoning: { ...state.reasoning, active: false },
     terminal: 'interrupted',
     footer: null,
+    toolElapsedMs: undefined,
   };
 }
 
@@ -153,6 +175,7 @@ export function markIdleTimeout(state: RunState, minutes: number): RunState {
     reasoning: { ...state.reasoning, active: false },
     terminal: 'idle_timeout',
     footer: null,
+    toolElapsedMs: undefined,
     idleTimeoutMinutes: minutes,
   };
 }
@@ -165,5 +188,6 @@ export function finalizeIfRunning(state: RunState): RunState {
     reasoning: { ...state.reasoning, active: false },
     terminal: 'done',
     footer: null,
+    toolElapsedMs: undefined,
   };
 }

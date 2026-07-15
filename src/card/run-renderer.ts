@@ -1,4 +1,10 @@
-import type { Block, FooterStatus, RunState, ToolEntry } from './run-state';
+import {
+  formatElapsedDuration,
+  type Block,
+  type FooterStatus,
+  type RunState,
+  type ToolEntry,
+} from './run-state';
 import { toolBodyMd, toolHeaderText } from './tool-render';
 
 const REASONING_MAX = 1500;
@@ -49,7 +55,7 @@ export function renderCard(state: RunState, options: RunCardRenderOptions = {}):
   }
 
   if (state.terminal === 'running') {
-    if (state.footer) elements.push(footerStatus(state.footer));
+    if (state.footer) elements.push(footerStatus(state.footer, state.toolElapsedMs));
     elements.push(stopButton(options));
   }
 
@@ -201,12 +207,12 @@ function stopButton(options: RunCardRenderOptions): object {
   };
 }
 
-function footerStatus(status: Exclude<FooterStatus, null>): object {
+function footerStatus(status: Exclude<FooterStatus, null>, toolElapsedMs?: number): object {
   const text =
     status === 'thinking'
       ? '🧠 正在思考'
       : status === 'tool_running'
-        ? '🧰 正在调用工具'
+        ? `🧰 正在调用工具${toolElapsedMs ? ` · 已运行 ${formatElapsedDuration(toolElapsedMs)}` : ''}`
         : '✍️ 正在输出';
   return noteMd(text);
 }

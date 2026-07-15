@@ -23,6 +23,7 @@ import {
   initialState,
   markIdleTimeout,
   markInterrupted,
+  markToolHeartbeat,
   reduce,
   type RunState,
 } from '../card/run-state';
@@ -67,6 +68,8 @@ import type { AppPaths } from '../config/app-paths';
 const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
 const STREAM_LIFECYCLE_FALLBACK_AFTER_MS = 9 * 60_000;
+const MARKDOWN_STREAM_ROTATE_AFTER_MS = 8 * 60_000;
+const TOOL_HEARTBEAT_MS = 45_000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
 const INTERRUPT_POLL_MS = 100;
 
@@ -186,6 +189,11 @@ export interface StartChannelDeps {
   workspaces: WorkspaceStore;
   controls: Controls;
   appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'>;
+  /** Test/operations tuning for long-running stream behavior. */
+  streamTiming?: {
+    markdownRotateAfterMs?: number;
+    toolHeartbeatMs?: number;
+  };
 }
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
@@ -299,6 +307,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           activePolicyFingerprints,
           scope,
           mode,
+          streamTiming: deps.streamTiming,
         });
       } catch (err) {
         log.fail('flush', err);
@@ -497,6 +506,25 @@ async function sendNonAllowedGroupHint(
   }
 }
 
+async function sendQueuedMessageAck(
+  channel: LarkChannel,
+  msg: NormalizedMessage,
+  chatMode: ChatMode,
+  position: number,
+): Promise<void> {
+  const markdown =
+    `⏳ 当前任务仍在执行；你的消息已排队（第 ${position} 条）。` +
+    '\n\n发送 `/stop` 可中断当前任务。';
+  await channel.send(
+    msg.chatId,
+    { markdown },
+    {
+      replyTo: msg.messageId,
+      ...(chatMode === 'topic' && msg.threadId ? { replyInThread: true } : {}),
+    },
+  );
+}
+
 interface IntakeDeps {
   channel: LarkChannel;
   agent: AgentAdapter;
@@ -605,8 +633,14 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     return;
   }
 
+  const queuedBehindActiveRun = pending.isBlocked(scope);
   const size = pending.push(scope, msg);
   log.info('intake', 'queued', { scope, queueSize: size, debounceMs: DEBOUNCE_MS });
+  if (queuedBehindActiveRun) {
+    void sendQueuedMessageAck(channel, msg, chatMode, size).catch((err) => {
+      log.warn('intake', 'queue-ack-failed', { scope, queueSize: size, err: String(err) });
+    });
+  }
 }
 
 interface RunBatchDeps {
@@ -622,6 +656,7 @@ interface RunBatchDeps {
   activePolicyFingerprints: Map<string, string>;
   scope: string;
   mode: ChatMode;
+  streamTiming?: StartChannelDeps['streamTiming'];
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -638,6 +673,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     activePolicyFingerprints,
     scope,
     mode,
+    streamTiming,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
@@ -835,6 +871,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             await cardCtrl.update(renderCard(filterForPrefs(state), cardRenderOptions));
           }
         },
+        streamTiming?.toolHeartbeatMs ?? TOOL_HEARTBEAT_MS,
       );
       const streamStartedAtMs = Date.now();
       const streamDone = channel.stream(
@@ -870,7 +907,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       const health: MarkdownStreamHealth = { updateFailed: false };
       await markdownStreamHealth.run(health, async () => {
         let latestState: RunState = initialState;
-        let producerStarted = false;
         let markdownCtrl: { setContent(markdown: string): Promise<void> } | undefined;
         const renderDone = processAgentStream(
           handle,
@@ -884,34 +920,103 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
               await markdownCtrl.setContent(renderText(filterForPrefs(state)));
             }
           },
+          streamTiming?.toolHeartbeatMs ?? TOOL_HEARTBEAT_MS,
         );
-        const streamStartedAtMs = Date.now();
-        const streamDone = channel.stream(
-          chatId,
-          {
-            markdown: async (ctrl) => {
-              producerStarted = true;
-              markdownCtrl = ctrl;
-              await ctrl.setContent(renderText(filterForPrefs(latestState)));
-              await renderDone;
+        const renderResult = renderDone.then(
+          (state) => ({ kind: 'render' as const, ok: true as const, state }),
+          (err) => ({ kind: 'render' as const, ok: false as const, err }),
+        );
+        const rotateAfterMs =
+          streamTiming?.markdownRotateAfterMs ?? MARKDOWN_STREAM_ROTATE_AFTER_MS;
+
+        while (true) {
+          health.updateFailed = false;
+          let producerStarted = false;
+          let rotating = false;
+          let closeSegment!: () => void;
+          const segmentClosed = new Promise<void>((resolve) => {
+            closeSegment = resolve;
+          });
+          const streamStartedAtMs = Date.now();
+          const rotateTimer = setTimeout(() => {
+            rotating = true;
+            closeSegment();
+          }, rotateAfterMs);
+          rotateTimer.unref?.();
+
+          const streamDone = channel.stream(
+            chatId,
+            {
+              markdown: async (ctrl) => {
+                producerStarted = true;
+                markdownCtrl = ctrl;
+                try {
+                  await ctrl.setContent(renderText(filterForPrefs(latestState)));
+                  await Promise.race([renderDone, segmentClosed]);
+                } finally {
+                  if (markdownCtrl === ctrl) markdownCtrl = undefined;
+                }
+              },
             },
-          },
-          sendOpts,
-        );
-        await awaitRenderAwareStream({
-          mode: replyMode,
-          streamDone,
-          renderDone,
-          streamStartedAtMs,
-          producerStarted: () => producerStarted,
-          streamUpdateFailed: () => health.updateFailed,
-          fallback: async (state) => {
-            const body = renderText(filterForPrefs(state));
-            if (body.trim()) {
-              await channel.send(chatId, { markdown: body }, sendOpts);
+            sendOpts,
+          );
+          const streamResult = streamDone.then(
+            () => ({ kind: 'stream' as const, ok: true as const }),
+            (err) => ({ kind: 'stream' as const, ok: false as const, err }),
+          );
+          const rotationResult = segmentClosed.then(() => ({ kind: 'rotate' as const }));
+          const first = await Promise.race([renderResult, streamResult, rotationResult]);
+
+          if (first.kind === 'rotate' || (first.kind === 'stream' && rotating)) {
+            clearTimeout(rotateTimer);
+            const terminal =
+              first.kind === 'stream'
+                ? first
+                : await Promise.race([
+                    streamResult,
+                    delay(STREAM_TERMINAL_GRACE_MS).then(() => undefined),
+                  ]);
+            if (!terminal) {
+              log.warn('stream', 'rotation-grace-expired', {
+                mode: replyMode,
+                graceMs: STREAM_TERMINAL_GRACE_MS,
+              });
+              void streamResult.then((result) => {
+                if (!result.ok) {
+                  log.fail('stream', result.err, {
+                    mode: replyMode,
+                    step: 'rotation-terminal-late',
+                  });
+                }
+              });
+            } else if (!terminal.ok) {
+              log.fail('stream', terminal.err, { mode: replyMode, step: 'rotation-terminal' });
             }
-          },
-        });
+            log.info('stream', 'lifecycle-rotated', {
+              mode: replyMode,
+              ageMs: Date.now() - streamStartedAtMs,
+              rotateAfterMs,
+            });
+            continue;
+          }
+
+          clearTimeout(rotateTimer);
+          await awaitRenderAwareStream({
+            mode: replyMode,
+            streamDone,
+            renderDone,
+            streamStartedAtMs,
+            producerStarted: () => producerStarted,
+            streamUpdateFailed: () => health.updateFailed,
+            fallback: async (state) => {
+              const body = renderText(filterForPrefs(state));
+              if (body.trim()) {
+                await channel.send(chatId, { markdown: body }, sendOpts);
+              }
+            },
+          });
+          break;
+        }
       });
     } else {
       // text mode: drain the agent stream without sending anything during
@@ -924,6 +1029,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         idleTimeoutMs,
         recordSession,
         async () => {},
+        streamTiming?.toolHeartbeatMs ?? TOOL_HEARTBEAT_MS,
       );
       const body = renderText(filterForPrefs(finalState));
       if (body.trim()) {
@@ -950,6 +1056,7 @@ async function processAgentStream(
   idleTimeoutMs: number | undefined,
   recordSession: (event: AgentEvent) => void,
   flush: (state: RunState) => Promise<void>,
+  toolHeartbeatMs: number,
 ): Promise<RunState> {
   const runStart = Date.now();
   let state: RunState = initialState;
@@ -970,7 +1077,7 @@ async function processAgentStream(
   //  - any non-tool event arrives while the set is empty.
   let idleFired = false;
   let timer: NodeJS.Timeout | undefined;
-  const inFlightTools = new Set<string>();
+  const inFlightTools = new Map<string, number>();
   const armOrPauseIdle = (): void => {
     if (!idleTimeoutMs) return;
     if (timer) clearTimeout(timer);
@@ -988,9 +1095,28 @@ async function processAgentStream(
   armOrPauseIdle();
 
   const iterator = events[Symbol.asyncIterator]();
+  let pendingNext: Promise<IteratorResult<AgentEvent>> | undefined;
   try {
     while (!handle.interrupted) {
-      const next = await nextEventOrInterrupt(iterator, handle);
+      pendingNext ??= iterator.next();
+      const next = await nextEventOrInterrupt(
+        pendingNext,
+        handle,
+        inFlightTools.size > 0 ? toolHeartbeatMs : undefined,
+      );
+      if (next === TOOL_HEARTBEAT) {
+        const oldestStartedAt = Math.min(...inFlightTools.values());
+        const elapsedMs = Date.now() - oldestStartedAt;
+        state = markToolHeartbeat(state, elapsedMs);
+        log.info('agent', 'tool-heartbeat', {
+          scope,
+          elapsedMs,
+          inFlight: inFlightTools.size,
+        });
+        await flush(state);
+        continue;
+      }
+      pendingNext = undefined;
       if (next === INTERRUPTED || next.done) break;
       const evt = next.value;
 
@@ -998,7 +1124,7 @@ async function processAgentStream(
       // sees the correct set size. tool_use opens a window; tool_result
       // closes it. Other event types are bookkept after the if/else.
       if (evt.type === 'tool_use') {
-        inFlightTools.add(evt.id);
+        inFlightTools.set(evt.id, Date.now());
         log.info('agent', 'tool-in-flight', {
           tool: evt.name,
           inFlight: inFlightTools.size,
@@ -1068,27 +1194,40 @@ async function processAgentStream(
 }
 
 const INTERRUPTED = Symbol('interrupted');
+const TOOL_HEARTBEAT = Symbol('tool-heartbeat');
 
 async function nextEventOrInterrupt<T>(
-  iterator: AsyncIterator<T>,
+  pendingNext: Promise<IteratorResult<T>>,
   handle: RunHandle,
-): Promise<IteratorResult<T> | typeof INTERRUPTED> {
+  heartbeatMs?: number,
+): Promise<IteratorResult<T> | typeof INTERRUPTED | typeof TOOL_HEARTBEAT> {
   if (handle.interrupted) return INTERRUPTED;
 
-  let timer: NodeJS.Timeout | undefined;
+  let interruptTimer: NodeJS.Timeout | undefined;
+  let heartbeatTimer: NodeJS.Timeout | undefined;
   const interrupted = new Promise<typeof INTERRUPTED>((resolve) => {
     const poll = (): void => {
       if (handle.interrupted) {
         resolve(INTERRUPTED);
         return;
       }
-      timer = setTimeout(poll, INTERRUPT_POLL_MS);
+      interruptTimer = setTimeout(poll, INTERRUPT_POLL_MS);
     };
-    timer = setTimeout(poll, INTERRUPT_POLL_MS);
+    interruptTimer = setTimeout(poll, INTERRUPT_POLL_MS);
   });
+  const heartbeat = heartbeatMs
+    ? new Promise<typeof TOOL_HEARTBEAT>((resolve) => {
+        heartbeatTimer = setTimeout(() => resolve(TOOL_HEARTBEAT), heartbeatMs);
+      })
+    : undefined;
 
-  const result = await Promise.race([iterator.next(), interrupted]);
-  if (timer) clearTimeout(timer);
+  const result = await Promise.race([
+    pendingNext,
+    interrupted,
+    ...(heartbeat ? [heartbeat] : []),
+  ]);
+  if (interruptTimer) clearTimeout(interruptTimer);
+  if (heartbeatTimer) clearTimeout(heartbeatTimer);
   return result;
 }
 
