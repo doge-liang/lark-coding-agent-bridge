@@ -388,6 +388,80 @@ describe('markdown stream startup failures', () => {
     expect(markdown).not.toContain('正在调用工具');
   });
 
+  it('rotates an active markdown stream and refreshes long-tool heartbeat text', async () => {
+    const streams: string[][] = [];
+    const agent = new CompletableLongToolAgentAdapter();
+    const h = await createHarness({
+      agent,
+      streamTiming: {
+        markdownRotateAfterMs: 80,
+        toolHeartbeatMs: 20,
+      },
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          markdown?: (ctrl: { setContent(markdown: string): Promise<void> }) => Promise<void>;
+        }).markdown;
+        if (!producer) throw new Error('expected markdown stream input');
+        const updates: string[] = [];
+        streams.push(updates);
+        await producer({
+          setContent: async (markdown: string): Promise<void> => {
+            updates.push(markdown);
+          },
+        });
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_first', 'run a long tool'));
+
+    await waitFor(() => streams.length >= 2, 1500);
+    expect(streams.flat().some((content) => content.includes('已运行'))).toBe(true);
+    expect(streams[1]?.some((content) => content.includes('正在调用工具'))).toBe(true);
+
+    agent.finish();
+    await waitFor(() =>
+      streams.flat().some((content) => content.includes('长工具执行完成')),
+    );
+    expect(streams.flat().at(-1)).not.toContain('正在调用工具');
+  });
+
+  it('acknowledges queued messages immediately while a run is active', async () => {
+    const markdownUpdates: string[] = [];
+    const agent = new CompletableLongToolAgentAdapter();
+    const h = await createHarness({
+      agent,
+      streamTiming: {
+        markdownRotateAfterMs: 5_000,
+        toolHeartbeatMs: 20,
+      },
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          markdown?: (ctrl: { setContent(markdown: string): Promise<void> }) => Promise<void>;
+        }).markdown;
+        if (!producer) throw new Error('expected markdown stream input');
+        await producer({
+          setContent: async (markdown: string): Promise<void> => {
+            markdownUpdates.push(markdown);
+          },
+        });
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_first', 'run a long tool'));
+    await waitFor(() => markdownUpdates.some((content) => content.includes('正在调用工具')));
+
+    await h.channel.handlers.message?.(message('om_second', 'is it still running?'));
+
+    await waitFor(() => h.channel.sent.length > 0);
+    expect(lastMarkdown(h.channel)).toContain('消息已排队（第 1 条）');
+    expect(lastMarkdown(h.channel)).toContain('/stop');
+    expect(h.channel.sent.at(-1)?.options).toMatchObject({ replyTo: 'om_second' });
+
+    agent.finish();
+  });
+
   it('marks the card interrupted promptly when a silent tool run is stopped', async () => {
     const updates: unknown[] = [];
     let producerStarted = false;
@@ -431,6 +505,10 @@ async function createHarness(options: {
   messageReply?: 'markdown' | 'card' | 'text';
   agentEvents?: FakeAgentEvents;
   agent?: FakeAgentAdapter;
+  streamTiming?: {
+    markdownRotateAfterMs?: number;
+    toolHeartbeatMs?: number;
+  };
 } = {}): Promise<{
   tmp: TmpProfile;
   channel: FakeLarkChannel;
@@ -439,6 +517,10 @@ async function createHarness(options: {
   workspaces: WorkspaceStore;
   profileConfig: ReturnType<typeof createDefaultProfileConfig>;
   controls: ReturnType<typeof createControls>;
+  streamTiming?: {
+    markdownRotateAfterMs?: number;
+    toolHeartbeatMs?: number;
+  };
 }> {
   const tmp = await createTmpProfile('markdown-stream-startup-failure-');
   const workspace = await realpath(tmp.workspace);
@@ -502,6 +584,7 @@ async function createHarness(options: {
     workspaces,
     profileConfig,
     controls,
+    streamTiming: options.streamTiming,
   };
 }
 
@@ -511,6 +594,10 @@ async function startTestBridge(h: {
   sessions: SessionStore;
   workspaces: WorkspaceStore;
   controls: ReturnType<typeof createControls>;
+  streamTiming?: {
+    markdownRotateAfterMs?: number;
+    toolHeartbeatMs?: number;
+  };
 }): Promise<void> {
   const bridge = await startChannel({
     cfg: h.profileConfig,
@@ -518,6 +605,7 @@ async function startTestBridge(h: {
     sessions: h.sessions,
     workspaces: h.workspaces,
     controls: h.controls,
+    streamTiming: h.streamTiming,
   });
   cleanups.push(() => bridge.disconnect());
 }
@@ -594,6 +682,53 @@ class HangingToolAgentAdapter extends FakeAgentAdapter {
     const run = new HangingToolRun(opts);
     this.runs.push(run);
     return run;
+  }
+}
+
+class CompletableLongToolAgentAdapter extends FakeAgentAdapter {
+  #finish = deferred<void>();
+
+  override run(opts: AgentRunOptions): FakeAgentRun {
+    this.runOptions.push(opts);
+    const run = new CompletableLongToolRun(opts, this.#finish.promise);
+    this.runs.push(run);
+    return run;
+  }
+
+  finish(): void {
+    this.#finish.resolve();
+  }
+}
+
+class CompletableLongToolRun implements FakeAgentRun {
+  readonly runId: string;
+  readonly opts: AgentRunOptions;
+  readonly events: AsyncIterable<AgentEvent>;
+  readonly waitForExitResult = true;
+  stopped = false;
+  waitForExitCalls = 0;
+
+  constructor(opts: AgentRunOptions, finish: Promise<void>) {
+    this.runId = opts.runId;
+    this.opts = opts;
+    this.events = this.iterate(finish);
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true;
+  }
+
+  async waitForExit(): Promise<boolean> {
+    this.waitForExitCalls++;
+    return true;
+  }
+
+  private async *iterate(finish: Promise<void>): AsyncIterable<AgentEvent> {
+    yield { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'sleep 600' } };
+    await finish;
+    yield { type: 'tool_result', id: 'tool-1', output: 'done', isError: false };
+    yield { type: 'text', delta: '长工具执行完成。' };
+    yield { type: 'done', terminationReason: 'normal' };
   }
 }
 
