@@ -193,6 +193,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/reconnect` | Force a WebSocket reconnect |
 | `/doctor [description]` | Run low-sensitive diagnostics |
 | `/upgrade [status\|check\|apply\|rollback]` | Owner/admin DM-only controlled self-update from the configured release branch |
+| `/update apply` | Exact alias for `/upgrade apply` |
 | `/help` | Help card |
 
 DMs do not require an @ mention. Groups and topic groups require `@bot` by default; `@all` is ignored. Cloud-doc comments in supported document types run when the bot is mentioned.
@@ -211,7 +212,6 @@ Bot custom menus are configured and published in the Feishu / Lark Developer Con
 | `Bunny 排期` | Schedule approved Bunny drafts |
 | `Bunny 日报` | Generate a Bunny daily report |
 | `状态` | `/status` |
-| `新对话` | `/new` |
 | `新会话` | `/new` |
 | `恢复` | `/resume` |
 | `帮助` | `/help` |

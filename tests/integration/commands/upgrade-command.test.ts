@@ -59,6 +59,17 @@ describe('Lark upgrade command', () => {
     expect(lastMarkdown(h.channel)).toContain('abc123');
   });
 
+  it('maps only exact /update apply to the canonical upgrade command', async () => {
+    const h = await createHarness();
+    h.upgrade.apply.mockResolvedValue('已切换到 `abc123`，正在重启。');
+
+    await expect(h.run('/update apply')).resolves.toBe(true);
+    expect(h.upgrade.apply).toHaveBeenCalledTimes(1);
+    expect(lastMarkdown(h.channel)).toContain('abc123');
+
+    await expect(h.run('/update check')).resolves.toBe(false);
+  });
+
   it('rejects upgrade from group chat even for admin', async () => {
     const h = await createHarness();
 
