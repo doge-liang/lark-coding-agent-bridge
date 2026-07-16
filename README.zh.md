@@ -193,7 +193,6 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 | `/reconnect` | 强制 WebSocket 重连 |
 | `/doctor [描述]` | 执行低敏诊断 |
 | `/upgrade [status\|check\|apply\|rollback]` | 仅 owner/admin 私聊可用；从配置的 release 分支执行受控自更新 |
-| `/update apply` | `/upgrade apply` 的精确别名 |
 | `/help` | 帮助卡片 |
 
 私聊不需要 @。群和话题群默认必须 `@bot`；`@all` 会被忽略。支持的云文档评论里 @bot 就会触发回复。

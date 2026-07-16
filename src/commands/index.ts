@@ -229,7 +229,6 @@ const commandAliases = new Map<string, string>([
   ['Codex 设置', '/codex-config'],
   ['Codex 配置', '/codex-config'],
   ['升级检查', '/upgrade check'],
-  ['/update apply', '/upgrade apply'],
 ]);
 
 /**
