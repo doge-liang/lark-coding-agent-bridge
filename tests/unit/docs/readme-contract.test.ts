@@ -119,8 +119,7 @@ describe('README runtime contract', () => {
   it('documents only the supported command aliases', async () => {
     const docs = await readDocs();
 
-    expect(docs).toContain('`/update apply` | Exact alias for `/upgrade apply`');
-    expect(docs).toContain('`/update apply` | `/upgrade apply` 的精确别名');
+    expect(docs).not.toContain('/update apply');
     expect(docs).toContain('| `新会话` | `/new` |');
     expect(docs).not.toContain('| `新对话` | `/new` |');
   });
