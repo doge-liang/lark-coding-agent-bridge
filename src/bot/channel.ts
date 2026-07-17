@@ -1167,9 +1167,6 @@ async function processAgentStream(
       } else if (evt.type === 'permission_request') {
         inFlightTools.set(evt.id, Date.now());
         log.info('agent', 'permission-parked', { id: evt.id, tool: evt.toolName });
-      } else if (evt.type === 'permission_resolved') {
-        inFlightTools.delete(evt.id);
-        log.info('agent', 'permission-resumed', { id: evt.id, inFlight: inFlightTools.size });
       }
       armOrPauseIdle();
 

@@ -426,6 +426,41 @@ describe('markdown stream startup failures', () => {
     expect(streams.flat().at(-1)).not.toContain('正在调用工具');
   });
 
+  it('keeps long-tool heartbeats active after an approval is resolved', async () => {
+    const markdownUpdates: string[] = [];
+    const agent = new PermissionApprovedLongToolAgentAdapter();
+    const h = await createHarness({
+      agent,
+      streamTiming: {
+        markdownRotateAfterMs: 5_000,
+        toolHeartbeatMs: 20,
+      },
+      stream: async (_chatId, input) => {
+        const producer = (input as {
+          markdown?: (ctrl: { setContent(markdown: string): Promise<void> }) => Promise<void>;
+        }).markdown;
+        if (!producer) throw new Error('expected markdown stream input');
+        await producer({
+          setContent: async (markdown: string): Promise<void> => {
+            markdownUpdates.push(markdown);
+          },
+        });
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_first', 'run an approved long tool'));
+
+    try {
+      await waitFor(
+        () => markdownUpdates.some((content) => content.includes('已运行')),
+        1_000,
+      );
+    } finally {
+      agent.finish();
+    }
+  });
+
   it('acknowledges queued messages immediately while a run is active', async () => {
     const markdownUpdates: string[] = [];
     const agent = new CompletableLongToolAgentAdapter();
@@ -697,6 +732,59 @@ class CompletableLongToolAgentAdapter extends FakeAgentAdapter {
 
   finish(): void {
     this.#finish.resolve();
+  }
+}
+
+class PermissionApprovedLongToolAgentAdapter extends FakeAgentAdapter {
+  #finish = deferred<void>();
+
+  override run(opts: AgentRunOptions): FakeAgentRun {
+    this.runOptions.push(opts);
+    const run = new PermissionApprovedLongToolRun(opts, this.#finish.promise);
+    this.runs.push(run);
+    return run;
+  }
+
+  finish(): void {
+    this.#finish.resolve();
+  }
+}
+
+class PermissionApprovedLongToolRun implements FakeAgentRun {
+  readonly runId: string;
+  readonly opts: AgentRunOptions;
+  readonly events: AsyncIterable<AgentEvent>;
+  readonly waitForExitResult = true;
+  stopped = false;
+  waitForExitCalls = 0;
+
+  constructor(opts: AgentRunOptions, finish: Promise<void>) {
+    this.runId = opts.runId;
+    this.opts = opts;
+    this.events = this.iterate(finish);
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true;
+  }
+
+  async waitForExit(): Promise<boolean> {
+    this.waitForExitCalls++;
+    return true;
+  }
+
+  private async *iterate(finish: Promise<void>): AsyncIterable<AgentEvent> {
+    yield { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'sleep 600' } };
+    yield {
+      type: 'permission_request',
+      id: 'tool-1',
+      toolName: 'Bash',
+      input: { command: 'sleep 600' },
+    };
+    yield { type: 'permission_resolved', id: 'tool-1', decision: 'allow', reason: 'user' };
+    await finish;
+    yield { type: 'tool_result', id: 'tool-1', output: 'done', isError: false };
+    yield { type: 'done', terminationReason: 'normal' };
   }
 }
 
