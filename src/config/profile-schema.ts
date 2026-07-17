@@ -47,6 +47,7 @@ export interface CodexConfig {
 export interface ClaudeConfig {
   model?: string;
   env?: Record<string, string>;
+  approvalTimeoutMinutes?: number;
 }
 
 export interface AttachmentConfig {
@@ -166,7 +167,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     };
     sandbox?: Partial<SandboxConfig>;
     permissions?: Partial<PermissionConfig>;
-    claude?: ClaudeConfig;
+    claude?: unknown;
     codex?: CodexConfig & { flags?: unknown };
     attachments?: Partial<AttachmentConfig>;
     comments?: unknown;
@@ -211,8 +212,8 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     sandbox,
     permissions,
     permissionSource,
-    ...(raw.agentKind === 'claude' && raw.claude ? { claude: normalizeClaude(raw.claude) } : {}),
     ...(raw.codex ? { codex: normalizeCodex(raw.codex) } : {}),
+    ...(raw.claude !== undefined ? { claude: normalizeClaude(raw.claude) } : {}),
     attachments: {
       maxCount: numberOr(raw.attachments?.maxCount, 10),
       maxBytes: numberOr(raw.attachments?.maxBytes, 100 * 1024 * 1024),
@@ -231,12 +232,18 @@ function normalizeClaude(input: unknown): ClaudeConfig {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error('invalid claude config');
   }
-  const raw = input as { model?: unknown; env?: unknown };
+  const raw = input as {
+    model?: unknown;
+    env?: unknown;
+    approvalTimeoutMinutes?: unknown;
+  };
   const model = normalizeClaudeModel(raw.model);
   const env = normalizeClaudeEnv(raw.env);
+  const approvalTimeoutMinutes = normalizeApprovalTimeout(raw.approvalTimeoutMinutes);
   return {
     ...(model ? { model } : {}),
     ...(env ? { env } : {}),
+    ...(approvalTimeoutMinutes !== undefined ? { approvalTimeoutMinutes } : {}),
   };
 }
 
@@ -345,6 +352,15 @@ function normalizeCodex(input: CodexConfig & { flags?: unknown }): CodexConfig {
     ignoreRules: input.ignoreRules !== false,
   };
   return codex;
+}
+
+function normalizeApprovalTimeout(input: unknown): number | undefined {
+  if (input === undefined || input === null) return undefined;
+  const n = Number(input);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error('invalid claude.approvalTimeoutMinutes');
+  }
+  return n;
 }
 
 function normalizeComments(_input: unknown): CommentConfig {

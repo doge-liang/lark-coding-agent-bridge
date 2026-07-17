@@ -629,3 +629,36 @@ describe('profile schema', () => {
     });
   });
 });
+
+describe('claude profile config', () => {
+  const base = {
+    schemaVersion: 2 as const,
+    agentKind: 'claude' as const,
+    accounts: { app },
+  };
+
+  it('accepts claude.env and claude.approvalTimeoutMinutes', () => {
+    const cfg = normalizeProfileConfig({
+      ...base,
+      claude: { env: { CLAUDE_CODE_OAUTH_TOKEN: 'tok' }, approvalTimeoutMinutes: 10 },
+    });
+    expect(cfg.claude?.env).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: 'tok' });
+    expect(cfg.claude?.approvalTimeoutMinutes).toBe(10);
+  });
+
+  it('omits claude when not configured', () => {
+    expect(normalizeProfileConfig(base).claude).toBeUndefined();
+  });
+
+  it('rejects invalid env keys and non-positive timeout', () => {
+    expect(() =>
+      normalizeProfileConfig({ ...base, claude: { env: { 'BAD=KEY': 'x' } } }),
+    ).toThrow();
+    expect(() =>
+      normalizeProfileConfig({ ...base, claude: { approvalTimeoutMinutes: 0 } }),
+    ).toThrow();
+    expect(() =>
+      normalizeProfileConfig({ ...base, claude: { approvalTimeoutMinutes: -1 } }),
+    ).toThrow();
+  });
+});

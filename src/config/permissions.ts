@@ -1,6 +1,6 @@
 export type AccessMode = 'read-only' | 'workspace' | 'full';
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
-export type ClaudePermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+export type ClaudePermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'auto';
 
 export interface PermissionConfig {
   defaultAccess: AccessMode;
@@ -35,6 +35,9 @@ const CLAUDE_PERMISSION_ACCESS: Record<ClaudePermissionMode, AccessMode> = {
   default: 'workspace',
   acceptEdits: 'workspace',
   bypassPermissions: 'full',
+  // auto lets the model classifier approve dangerous operations on its own,
+  // so it requires the same access ceiling as bypass.
+  auto: 'full',
 };
 
 export function normalizePermissions(input: {
@@ -126,7 +129,7 @@ function accessToDefaultClaudePermissionMode(access: AccessMode): ClaudePermissi
     case 'workspace':
       return 'acceptEdits';
     case 'full':
-      return 'bypassPermissions';
+      return 'auto';
   }
 }
 
@@ -280,6 +283,7 @@ function isClaudePermissionMode(value: unknown): value is ClaudePermissionMode {
     value === 'default' ||
     value === 'acceptEdits' ||
     value === 'bypassPermissions' ||
-    value === 'plan'
+    value === 'plan' ||
+    value === 'auto'
   );
 }

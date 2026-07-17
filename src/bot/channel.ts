@@ -14,7 +14,9 @@ import {
   type BridgePromptQuotedMessage,
 } from '../agent/prompt';
 import type { AgentAdapter, AgentEvent } from '../agent/types';
+import { ApprovalCardTracker } from '../card/approval-card';
 import { handleCardAction } from '../card/dispatcher';
+import { sendManagedCard, updateManagedCard, forgetManagedCard } from '../card/managed';
 import { CallbackAuth } from '../card/callback-auth';
 import { CallbackNonceStore } from '../card/callback-store';
 import { renderCard } from '../card/run-renderer';
@@ -82,7 +84,7 @@ const markdownStreamHealth = new AsyncLocalStorage<MarkdownStreamHealth>();
 const BRIDGE_AGENT_INSTRUCTIONS = [
   '你在 bridge 进程中运行，普通 lark-cli 会继承 LARK_CHANNEL=1 并进入 bridge-bound 模式。',
   '不要 unset LARK_CHANNEL / LARK_CHANNEL_HOME / LARK_CHANNEL_PROFILE / LARKSUITE_CLI_CONFIG_DIR，也不要用 env -u LARK_CHANNEL 绕回本机普通配置。',
-  'Codex bridge 默认使用 danger-full-access 对齐 Claude bridge 的 bypassPermissions 行为，因此 lark-cli 应能像用户本机终端一样访问 keychain。',
+  'Codex bridge 默认使用 danger-full-access；Claude bridge 的权限按配置的 permission mode 处理（默认 auto：分类器放行常规操作，敏感操作弹审批卡升级），full 模式下依然拥有广泛访问权限，因此 lark-cli 应能像用户本机终端一样访问 keychain。',
   '如果提示 lark-channel context detected but not bound，停止当前操作并请用户重启 bridge 或运行 bridge doctor/preflight；不要改用普通 profile，不要自行 bind，也不要直接读取 config.json 里的账号或密钥。',
 ];
 
@@ -845,6 +847,28 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       }
     : {};
 
+  const approvalTimeoutMinutes = controls.profileConfig.claude?.approvalTimeoutMinutes ?? 5;
+  const approvals = new ApprovalCardTracker(
+    {
+      send: async (card) => {
+        const { messageId } = await sendManagedCard(channel, chatId, card, sendOpts);
+        return { messageId };
+      },
+      update: async (messageId, card) => {
+        // The tracker updates each approval card exactly once, to its terminal
+        // state, then never touches it again. Forget the managed-map entry after
+        // that terminal render lands so it doesn't leak. If the update throws we
+        // keep the entry (a retry is impossible anyway; keeping it is harmless).
+        await updateManagedCard(channel, messageId, card);
+        forgetManagedCard(messageId);
+      },
+    },
+    {
+      timeoutMinutes: approvalTimeoutMinutes,
+      ...(cardRenderOptions.signCallback ? { sign: cardRenderOptions.signCallback } : {}),
+    },
+  );
+
   // For non-card modes Claude's output doesn't surface visually until either
   // a first streamed token (markdown mode) or the whole run ends (text mode).
   // Add a "Typing" reaction to the triggering message as an instant ack, but
@@ -872,6 +896,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
         streamTiming?.toolHeartbeatMs ?? TOOL_HEARTBEAT_MS,
+        approvals,
       );
       const streamStartedAtMs = Date.now();
       const streamDone = channel.stream(
@@ -921,6 +946,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             }
           },
           streamTiming?.toolHeartbeatMs ?? TOOL_HEARTBEAT_MS,
+          approvals,
         );
         const renderResult = renderDone.then(
           (state) => ({ kind: 'render' as const, ok: true as const, state }),
@@ -1030,6 +1056,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         recordSession,
         async () => {},
         streamTiming?.toolHeartbeatMs ?? TOOL_HEARTBEAT_MS,
+        approvals,
       );
       const body = renderText(filterForPrefs(finalState));
       if (body.trim()) {
@@ -1057,6 +1084,11 @@ async function processAgentStream(
   recordSession: (event: AgentEvent) => void,
   flush: (state: RunState) => Promise<void>,
   toolHeartbeatMs: number,
+  approvals?: {
+    onRequest(evt: Extract<AgentEvent, { type: 'permission_request' }>): Promise<void>;
+    onResolved(evt: Extract<AgentEvent, { type: 'permission_resolved' }>): Promise<void>;
+    sweep(): Promise<void>;
+  },
 ): Promise<RunState> {
   const runStart = Date.now();
   let state: RunState = initialState;
@@ -1132,6 +1164,9 @@ async function processAgentStream(
       } else if (evt.type === 'tool_result') {
         inFlightTools.delete(evt.id);
         log.info('agent', 'tool-done', { inFlight: inFlightTools.size });
+      } else if (evt.type === 'permission_request') {
+        inFlightTools.set(evt.id, Date.now());
+        log.info('agent', 'permission-parked', { id: evt.id, tool: evt.toolName });
       }
       armOrPauseIdle();
 
@@ -1154,6 +1189,14 @@ async function processAgentStream(
         }
         continue;
       }
+      if (evt.type === 'permission_request') {
+        if (approvals) await approvals.onRequest(evt);
+        continue;
+      }
+      if (evt.type === 'permission_resolved') {
+        if (approvals) await approvals.onResolved(evt);
+        continue;
+      }
 
       const prevTerminal = state.terminal;
       const prevFooter = state.footer;
@@ -1170,6 +1213,8 @@ async function processAgentStream(
   } finally {
     if (timer) clearTimeout(timer);
   }
+
+  if (approvals) await approvals.sweep();
 
   // If state already reached a terminal event (done/error/etc.) before the
   // watchdog or interrupt could land, don't clobber it — that real terminal

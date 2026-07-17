@@ -23,7 +23,23 @@ export type AgentEvent =
       threadId?: string;
       terminationReason: 'normal' | 'interrupted' | 'timeout';
     }
-  | { type: 'error'; message: string; terminationReason: 'failed' | 'interrupted' | 'timeout' };
+  | { type: 'error'; message: string; terminationReason: 'failed' | 'interrupted' | 'timeout' }
+  | {
+      type: 'permission_request';
+      id: string;
+      toolName: string;
+      input: unknown;
+      title?: string;
+      displayName?: string;
+      description?: string;
+    }
+  | {
+      type: 'permission_resolved';
+      id: string;
+      decision: 'allow' | 'deny';
+      reason: 'user' | 'timeout' | 'aborted';
+    }
+  | { type: 'notice'; text: string };
 
 export const CLAUDE_DEFAULT_PERMISSION_MODE: ClaudePermissionMode = 'bypassPermissions';
 
@@ -56,13 +72,28 @@ export interface AgentRun {
    * Resolves true if it exited within the window, false if the timer
    * fired first (caller usually wants to fall back to stop()).
    *
-   * Use this after a terminal stream event (`done` / `error`): the
-   * stream-json `result` line arrives before claude has actually closed
-   * stdout — there's a brief telemetry/cleanup tail in between. Calling
-   * stop() in that window forces a SIGTERM and the run exits with code
-   * 143 instead of 0; waiting it out lets it exit cleanly.
+   * Use this after a terminal stream event (`done` / `error`): the SDK
+   * query's async iteration finishing is what resolves this, and that can
+   * lag slightly behind the terminal event while the SDK tears down —
+   * waiting it out avoids forcing stop() during that brief window.
    */
   waitForExit(timeoutMs: number): Promise<boolean>;
+  /**
+   * Resolve a pending interactive permission request emitted as a
+   * `permission_request` event. No-op if the id is unknown or already
+   * settled (e.g. timed out or force-denied on stop). Adapters that never
+   * emit permission_request may omit this.
+   */
+  respondPermission?(
+    id: string,
+    decision: 'allow' | 'deny',
+    opts?: { updatedInput?: Record<string, unknown>; message?: string },
+  ): void;
+  /**
+   * Inject an additional user instruction into an in-flight run (Phase 2).
+   * Adapters without a live streaming session may omit it.
+   */
+  steer?(text: string): void;
 }
 
 /**
