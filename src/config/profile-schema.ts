@@ -391,7 +391,7 @@ function normalizeUpgrade(input: unknown): UpgradeConfig {
   const raw = input as Record<string, unknown>;
   const remote = nonEmptyString(raw.remote, 'origin');
   const sourceUrl = optionalUpgradeSourceUrl(raw.sourceUrl ?? raw.remoteUrl);
-  const branch = nonEmptyString(raw.branch, 'release');
+  const branch = nonEmptyString(raw.branch, 'main');
   return {
     enabled: raw.enabled === true,
     remote,
@@ -407,7 +407,7 @@ function defaultUpgradeConfig(): UpgradeConfig {
   return {
     enabled: false,
     remote: 'origin',
-    branch: 'release',
+    branch: 'main',
     requireTests: false,
     healthTimeoutMs: 60_000,
     retainReleases: 3,
