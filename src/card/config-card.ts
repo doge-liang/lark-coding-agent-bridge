@@ -223,8 +223,8 @@ export function configFormCard(opts: ConfigFormOpts): object {
               tag: 'markdown',
               content:
                 '\n**升级源 URL**\n' +
-                '_推荐填写 git 仓库 URL;升级检查用它获取 release 分支最新 commit,不依赖当前运行目录是否有 `.git`_\n' +
-                '_留空:兼容旧配置,从当前/历史 release 的 git remote 解析_',
+                '_推荐填写 git 仓库 URL;升级检查用它获取配置分支最新 commit,不依赖当前运行目录是否有 `.git`_\n' +
+                '_留空:兼容旧配置,从当前/历史升级版本的 git remote 解析_',
             },
             {
               tag: 'input',
