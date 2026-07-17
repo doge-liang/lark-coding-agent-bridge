@@ -15,7 +15,7 @@ For a product walkthrough, see the [Feishu document](https://larkcommunity.feish
 - **Multiple workspaces**: use `/cd` to switch the current project, and `/ws` to save and reuse common project directories.
 - **Images and files**: send them to the bot directly, and the bridge downloads them locally for the agent.
 - **Interactive cards**: `/help`, `/ws list`, and `/status` return cards with clickable buttons.
-- **Controlled self-update**: an owner/admin can opt into a DM-only `/upgrade` flow for release-branch deployments.
+- **Controlled self-update**: an owner/admin can opt into a DM-only `/upgrade` flow that tracks the main branch by default.
 
 ## Prerequisites
 
@@ -108,7 +108,7 @@ lark-channel-bridge status --profile codex
 
 ## Controlled self-update
 
-Self-update is disabled by default and is intended for trusted git/release-branch deployments. The running bridge root must be a git checkout or a previous release clone with the configured remote; npm-only global installs should still be updated with npm/pnpm.
+Self-update is disabled by default and is intended for trusted git deployments that track the main branch. The running bridge root must be a git checkout or a previous release clone with the configured remote; npm-only global installs should still be updated with npm/pnpm.
 
 Enable it by editing the matching profile in `~/.lark-channel/config.json`:
 
@@ -117,7 +117,7 @@ Enable it by editing the matching profile in `~/.lark-channel/config.json`:
   "upgrade": {
     "enabled": true,
     "remote": "origin",
-    "branch": "release",
+    "branch": "main",
     "requireTests": false,
     "healthTimeoutMs": 60000,
     "retainReleases": 3
@@ -134,7 +134,7 @@ Then DM the bot as the owner or an admin:
 /upgrade rollback
 ```
 
-`/upgrade` never accepts an arbitrary chat-provided URL or ref. `apply` fetches the configured release branch, clones it into a profile-local staging directory, runs `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm build`, and optionally `pnpm test`, then switches launcher state and asks the OS service to restart. If the new bridge does not mark itself healthy before `healthTimeoutMs`, the launcher rolls back to the previous release.
+`/upgrade` never accepts an arbitrary chat-provided URL or ref. `apply` fetches the configured main branch by default, clones it into a profile-local staging directory, runs `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm build`, and optionally `pnpm test`, then switches launcher state and asks the OS service to restart. If the new bridge does not mark itself healthy before `healthTimeoutMs`, the launcher rolls back to the previous release. The check compares branch commits; it does not query GitHub Releases. Merging into `main` therefore does not publish a release by itself—a version bump, tag, and matching GitHub Release are still required.
 
 ## Commands
 
@@ -192,7 +192,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/exit <id\|#>` | Stop a bridge process |
 | `/reconnect` | Force a WebSocket reconnect |
 | `/doctor [description]` | Run low-sensitive diagnostics |
-| `/upgrade [status\|check\|apply\|rollback]` | Owner/admin DM-only controlled self-update from the configured release branch |
+| `/upgrade [status\|check\|apply\|rollback]` | Owner/admin DM-only controlled self-update from the configured main branch |
 | `/help` | Help card |
 
 DMs do not require an @ mention. Groups and topic groups require `@bot` by default; `@all` is ignored. Cloud-doc comments in supported document types run when the bot is mentioned.

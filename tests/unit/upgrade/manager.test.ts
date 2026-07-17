@@ -23,7 +23,7 @@ describe('UpgradeManager', () => {
     expect(h.run).not.toHaveBeenCalled();
   });
 
-  it('checks configured release branch', async () => {
+  it('checks configured main branch', async () => {
     const h = await harness({ enabled: true });
     h.run.mockResolvedValueOnce({ ok: true, stdout: '', stderr: '' });
     h.run.mockResolvedValueOnce({ ok: true, stdout: 'abc123\n', stderr: '' });
@@ -46,7 +46,7 @@ describe('UpgradeManager', () => {
       h.currentPath,
       'fetch',
       'origin',
-      'refs/heads/release:refs/remotes/origin/release',
+      'refs/heads/main:refs/remotes/origin/main',
     ]);
   });
 
@@ -74,13 +74,13 @@ describe('UpgradeManager', () => {
       sourceRelease,
       'fetch',
       'origin',
-      'refs/heads/release:refs/remotes/origin/release',
+      'refs/heads/main:refs/remotes/origin/main',
     ]);
     expect(h.run.mock.calls[1]?.[1]).toEqual([
       '-C',
       sourceRelease,
       'rev-parse',
-      'refs/remotes/origin/release',
+      'refs/remotes/origin/main',
     ]);
     expect(h.run.mock.calls[2]?.[1]?.slice(0, 2)).toEqual(['-C', sourceRelease]);
   });
@@ -88,7 +88,12 @@ describe('UpgradeManager', () => {
   it('checks the configured source URL without requiring the current runtime path to be a git repository', async () => {
     const target = 'a'.repeat(40);
     const sourceUrl = 'https://github.com/example/lark-channel-bridge.git';
-    const h = await harness({ enabled: true, currentHasGit: false, sourceUrl } as Parameters<typeof harness>[0]);
+    const h = await harness({
+      enabled: true,
+      currentHasGit: false,
+      sourceUrl,
+      branch: 'release',
+    } as Parameters<typeof harness>[0]);
     h.run.mockResolvedValueOnce({ ok: true, stdout: `${target}\trefs/heads/release\n`, stderr: '' });
 
     const result = await h.manager.check();
@@ -103,7 +108,12 @@ describe('UpgradeManager', () => {
   it('applies by cloning the configured source URL without requiring the current runtime path to be a git repository', async () => {
     const target = 'b'.repeat(40);
     const sourceUrl = 'https://github.com/example/lark-channel-bridge.git';
-    const h = await harness({ enabled: true, currentHasGit: false, sourceUrl } as Parameters<typeof harness>[0]);
+    const h = await harness({
+      enabled: true,
+      currentHasGit: false,
+      sourceUrl,
+      branch: 'release',
+    } as Parameters<typeof harness>[0]);
     await saveUpgradeState(h.paths.stateFile, {
       current: { commit: 'old', path: h.currentPath },
     });

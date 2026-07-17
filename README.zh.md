@@ -15,7 +15,7 @@
 - **多工作空间**：用 `/cd` 切换当前项目，用 `/ws` 保存和复用常用项目目录。
 - **图片 / 文件**：直接发给 bot，bridge 下载到本地后交给本机 agent 处理。
 - **卡片按钮**：`/help`、`/ws list`、`/status` 返回可点击的交互卡片。
-- **受控自更新**：owner/admin 可以按需开启仅私聊可用的 `/upgrade` 流程，用于 release 分支部署。
+- **受控自更新**：owner/admin 可以按需开启仅私聊可用的 `/upgrade` 流程，默认跟踪 main 分支。
 
 ## 前置条件
 
@@ -108,7 +108,7 @@ lark-channel-bridge status --profile codex
 
 ## 受控自更新
 
-自更新默认关闭，适合可信的 git / release 分支部署。当前运行的 bridge 根目录必须是带有配置 remote 的 git checkout，或之前自更新产生的 release clone；如果只是 npm 全局安装，请继续用 npm/pnpm 更新。
+自更新默认关闭，适合跟踪 main 分支的可信 git 部署。当前运行的 bridge 根目录必须是带有配置 remote 的 git checkout，或之前自更新产生的 release clone；如果只是 npm 全局安装，请继续用 npm/pnpm 更新。
 
 在 `~/.lark-channel/config.json` 里编辑对应 profile 开启：
 
@@ -117,7 +117,7 @@ lark-channel-bridge status --profile codex
   "upgrade": {
     "enabled": true,
     "remote": "origin",
-    "branch": "release",
+    "branch": "main",
     "requireTests": false,
     "healthTimeoutMs": 60000,
     "retainReleases": 3
@@ -134,7 +134,7 @@ lark-channel-bridge status --profile codex
 /upgrade rollback
 ```
 
-`/upgrade` 不接受聊天里传入的任意 URL 或 ref。`apply` 只会拉取配置好的 release 分支，clone 到当前 profile 的 staging 目录，执行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm build`，按需再执行 `pnpm test`；通过后切换 launcher 状态并请求系统服务重启。如果新 bridge 在 `healthTimeoutMs` 内没有标记健康，launcher 会自动回滚到上一个 release。
+`/upgrade` 不接受聊天里传入的任意 URL 或 ref。`apply` 默认拉取配置的 main 分支，clone 到当前 profile 的 staging 目录，执行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm build`，按需再执行 `pnpm test`；通过后切换 launcher 状态并请求系统服务重启。如果新 bridge 在 `healthTimeoutMs` 内没有标记健康，launcher 会自动回滚到上一个 release。升级检查比较的是分支提交，不会查询 GitHub Release。因此，代码合入 `main` 本身不等于正式发布；仍需更新版本号、创建 tag 和对应的 GitHub Release。
 
 ## 命令速查
 
@@ -192,7 +192,7 @@ lark-channel-bridge profile export <name> --include-secrets --yes
 | `/exit <id\|#>` | 停止指定 bridge 进程 |
 | `/reconnect` | 强制 WebSocket 重连 |
 | `/doctor [描述]` | 执行低敏诊断 |
-| `/upgrade [status\|check\|apply\|rollback]` | 仅 owner/admin 私聊可用；从配置的 release 分支执行受控自更新 |
+| `/upgrade [status\|check\|apply\|rollback]` | 仅 owner/admin 私聊可用；从配置的 main 分支执行受控自更新 |
 | `/help` | 帮助卡片 |
 
 私聊不需要 @。群和话题群默认必须 `@bot`；`@all` 会被忽略。支持的云文档评论里 @bot 就会触发回复。

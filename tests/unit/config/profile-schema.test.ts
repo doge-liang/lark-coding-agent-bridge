@@ -139,7 +139,7 @@ describe('profile schema', () => {
     expect(cfg.larkCli).not.toHaveProperty('workspaceMode');
   });
 
-  it('defaults controlled self-update to release branch with fast verification', () => {
+  it('defaults controlled self-update to main branch with fast verification', () => {
     const cfg = createDefaultProfileConfig({
       agentKind: 'claude',
       accounts: { app },
@@ -148,11 +148,24 @@ describe('profile schema', () => {
     expect(cfg.upgrade).toEqual({
       enabled: false,
       remote: 'origin',
-      branch: 'release',
+      branch: 'main',
       requireTests: false,
       healthTimeoutMs: 60_000,
       retainReleases: 3,
     });
+  });
+
+  it('falls back to main when the configured upgrade branch is blank', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      upgrade: {
+        branch: '   ',
+      },
+    });
+
+    expect(cfg.upgrade.branch).toBe('main');
   });
 
   it('normalizes upgrade config with safe fallbacks', () => {

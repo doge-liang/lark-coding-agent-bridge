@@ -183,7 +183,7 @@ describe('profile-aware account and config commands', () => {
       enabled: true,
       remote: 'origin',
       sourceUrl: 'https://github.com/example/lark-channel-bridge.git',
-      branch: 'release',
+      branch: 'main',
       requireTests: false,
       healthTimeoutMs: 60_000,
       retainReleases: 3,

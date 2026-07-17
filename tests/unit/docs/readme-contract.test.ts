@@ -30,8 +30,8 @@ describe('README runtime contract', () => {
       '受控自更新',
       '/upgrade [status',
       'profiles/<profile>/upgrades',
-      'release branch',
-      'release 分支',
+      'main branch',
+      'main 分支',
     ]) {
       expect(docs).toContain(phrase);
     }
