@@ -183,7 +183,7 @@ function defaultPermissions(): PermissionConfig {
   };
 }
 
-function assertClaudePermissionWithinAccess(
+export function assertClaudePermissionWithinAccess(
   permissionMode: ClaudePermissionMode,
   maxAccess: AccessMode,
 ): void {

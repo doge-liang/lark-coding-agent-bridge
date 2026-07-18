@@ -22,6 +22,14 @@ import {
   type CodexHomeMode,
 } from '../card/codex-config-card';
 import {
+  claudeConfigCancelledCard,
+  claudeConfigFailedCard,
+  claudeConfigFormCard,
+  claudeConfigSavedCard,
+  type ClaudeConfigFormOpts,
+  type ClaudePermissionModeChoice,
+} from '../card/claude-config-card';
+import {
   configCancelledCard,
   configFailedCard,
   configFormCard,
@@ -56,8 +64,10 @@ import { resolveAppPaths } from '../config/app-paths';
 import {
   accessToClaudePermissionMode,
   assertAccessPair,
+  assertClaudePermissionWithinAccess,
   permissionsToLegacySandbox,
   type AccessMode,
+  type ClaudePermissionMode,
 } from '../config/permissions';
 import {
   loadRootConfig,
@@ -204,6 +214,7 @@ const handlers: Record<string, Handler> = {
   '/account': handleAccount,
   '/config': handleConfig,
   '/codex-config': handleCodexConfig,
+  '/claude-config': handleClaudeConfig,
   '/stop': handleStop,
   '/timeout': handleTimeout,
   '/ps': handlePs,
@@ -229,6 +240,8 @@ const commandAliases = new Map<string, string>([
   ['配置', '/config'],
   ['Codex 设置', '/codex-config'],
   ['Codex 配置', '/codex-config'],
+  ['Claude 设置', '/claude-config'],
+  ['Claude 配置', '/claude-config'],
   ['升级检查', '/upgrade check'],
 ]);
 
@@ -241,6 +254,7 @@ const ADMIN_COMMANDS = new Set([
   '/account',
   '/config',
   '/codex-config',
+  '/claude-config',
   '/ps',
   '/exit',
   '/reconnect',
@@ -2478,6 +2492,190 @@ async function saveCodexProfileConfig(
   });
 
   return codexConfigFormOpts(ctx);
+}
+
+// ────────────── /claude-config — Claude profile form ──────────────
+
+async function handleClaudeConfig(args: string, ctx: CommandContext): Promise<void> {
+  const sub = args.trim().split(/\s+/)[0] ?? '';
+  if (ctx.controls.profileConfig.agentKind !== 'claude') {
+    await reply(ctx, '当前 profile 不是 Claude，`/claude-config` 只支持 Claude profile。');
+    return;
+  }
+
+  switch (sub) {
+    case '':
+      return showClaudeConfigForm(ctx);
+    case 'submit':
+      return submitClaudeConfig(ctx);
+    case 'cancel':
+      return cancelClaudeConfig(ctx);
+    default:
+      await reply(ctx, '用法:`/claude-config`');
+  }
+}
+
+async function showClaudeConfigForm(ctx: CommandContext): Promise<void> {
+  const card = claudeConfigFormCard(claudeConfigFormOpts(ctx));
+  if (ctx.fromCardAction) await recallMessage(ctx, ctx.msg.messageId);
+  await sendManagedCard(ctx.channel, ctx.msg.chatId, card);
+}
+
+async function cancelClaudeConfig(ctx: CommandContext): Promise<void> {
+  if (ctx.fromCardAction) {
+    const formMsgId = ctx.msg.messageId;
+    void (async () => {
+      await new Promise((r) => setTimeout(r, FORM_SETTLE_MS));
+      await showResultCardInPlace(ctx, formMsgId, claudeConfigCancelledCard());
+    })();
+  }
+}
+
+async function submitClaudeConfig(ctx: CommandContext): Promise<void> {
+  const fv = ctx.formValue ?? {};
+  const formMsgId = ctx.msg.messageId;
+
+  void (async () => {
+    const submittedAt = Date.now();
+    const waitForSettle = async (): Promise<void> => {
+      const elapsed = Date.now() - submittedAt;
+      if (elapsed < FORM_SETTLE_MS) {
+        await new Promise<void>((r) => setTimeout(r, FORM_SETTLE_MS - elapsed));
+      }
+    };
+
+    let saved: ClaudeConfigFormOpts;
+    try {
+      saved = await saveClaudeProfileConfig(ctx, fv);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.fail('command', err, { step: 'claude-config.save' });
+      reportMetric('command_fail', 1, { step: 'claude-config.save' });
+      await waitForSettle();
+      await showResultCardInPlace(ctx, formMsgId, claudeConfigFailedCard(msg));
+      return;
+    }
+
+    log.info('command', 'claude-config-saved', {
+      profile: ctx.controls.profile,
+      defaultAccess: saved.defaultAccess,
+      maxAccess: saved.maxAccess,
+      permissionMode: saved.permissionMode,
+    });
+    await waitForSettle();
+    await showResultCardInPlace(ctx, formMsgId, claudeConfigSavedCard(saved));
+  })();
+}
+
+function claudeConfigFormOpts(ctx: CommandContext): ClaudeConfigFormOpts {
+  const profile = ctx.controls.profileConfig;
+  const claude = profile.claude;
+  return {
+    profileName: ctx.controls.profile,
+    defaultWorkspace: profile.workspaces.default ?? '',
+    defaultAccess: profile.permissions.defaultAccess,
+    maxAccess: profile.permissions.maxAccess,
+    permissionMode: profile.permissions.claude?.permissionMode ?? 'inherit',
+    model: claude?.model ?? '',
+    approvalTimeoutMinutes:
+      claude?.approvalTimeoutMinutes !== undefined ? String(claude.approvalTimeoutMinutes) : '',
+  };
+}
+
+async function saveClaudeProfileConfig(
+  ctx: CommandContext,
+  fv: Record<string, unknown>,
+): Promise<ClaudeConfigFormOpts> {
+  const current = claudeConfigFormOpts(ctx);
+  const defaultAccess = parseAccessMode(fv.default_access, current.defaultAccess);
+  const maxAccess = parseAccessMode(fv.max_access, current.maxAccess);
+  assertAccessPair(defaultAccess, maxAccess);
+  const permissionMode = parseClaudePermissionModeChoice(fv.permission_mode, current.permissionMode);
+  if (permissionMode !== 'inherit') {
+    assertClaudePermissionWithinAccess(permissionMode, maxAccess);
+  }
+
+  const rawWorkspace = Object.hasOwn(fv, 'default_workspace')
+    ? String(fv.default_workspace ?? '').trim()
+    : current.defaultWorkspace;
+  const defaultWorkspace = await resolveOptionalProfileDirectory(rawWorkspace, '默认工作目录');
+  const model = Object.hasOwn(fv, 'model')
+    ? normalizeClaudeModelInput(fv.model)
+    : current.model;
+  const approvalTimeoutMinutes = Object.hasOwn(fv, 'approval_timeout_minutes')
+    ? parseApprovalTimeoutInput(fv.approval_timeout_minutes)
+    : current.approvalTimeoutMinutes;
+
+  await withConfigFileLock(ctx.controls.configPath, async () => {
+    const root = await loadRootConfig(ctx.controls.configPath);
+    if (!root) throw new Error('当前配置不是 profile config，无法保存 Claude 设置。');
+    const profile = root.profiles[ctx.controls.profile];
+    if (!profile) throw new Error(`profile not found: ${ctx.controls.profile}`);
+    if (profile.agentKind !== 'claude') {
+      throw new Error('当前 profile 不是 Claude，未做修改。');
+    }
+
+    const nextWorkspaces = { ...profile.workspaces };
+    if (defaultWorkspace) nextWorkspaces.default = defaultWorkspace;
+    else delete nextWorkspaces.default;
+
+    const permissions = {
+      defaultAccess,
+      maxAccess,
+      ...(permissionMode !== 'inherit' ? { claude: { permissionMode } } : {}),
+    };
+    const nextClaude = {
+      ...profile.claude,
+      ...(model ? { model } : {}),
+      ...(approvalTimeoutMinutes
+        ? { approvalTimeoutMinutes: Number(approvalTimeoutMinutes) }
+        : {}),
+    };
+    if (!model) delete nextClaude.model;
+    if (!approvalTimeoutMinutes) delete nextClaude.approvalTimeoutMinutes;
+
+    root.profiles[ctx.controls.profile] = {
+      ...profile,
+      workspaces: nextWorkspaces,
+      permissions,
+      ...(Object.keys(nextClaude).length > 0 ? { claude: nextClaude } : { claude: undefined }),
+    };
+    await saveRootConfig(root, ctx.controls.configPath);
+    ctx.controls.profileConfig = root.profiles[ctx.controls.profile]!;
+    ctx.controls.cfg = runtimeProfileConfig(root, ctx.controls.profile);
+  });
+
+  return claudeConfigFormOpts(ctx);
+}
+
+function parseClaudePermissionModeChoice(
+  value: unknown,
+  fallback: ClaudePermissionModeChoice,
+): ClaudePermissionModeChoice {
+  const raw = String(value ?? '').trim();
+  if (raw === 'inherit') return 'inherit';
+  if (isClaudePermissionMode(raw)) return raw;
+  return fallback;
+}
+
+function isClaudePermissionMode(value: string): value is ClaudePermissionMode {
+  return (
+    value === 'default' ||
+    value === 'acceptEdits' ||
+    value === 'bypassPermissions' ||
+    value === 'plan' ||
+    value === 'auto'
+  );
+}
+
+function parseApprovalTimeoutInput(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error('审批卡超时请填正数分钟，或留空使用默认值。');
+  }
+  return raw;
 }
 
 function parseAccessMode(value: unknown, fallback: AccessMode): AccessMode {
