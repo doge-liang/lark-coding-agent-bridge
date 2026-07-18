@@ -146,6 +146,84 @@ describe('profile-aware account and config commands', () => {
     expect(message).toContain('当前 profile 不是 Codex');
   });
 
+  it('opens the Claude profile form through the Feishu menu shortcut text', async () => {
+    const h = await createHarness({ activeProfile: 'claude' });
+
+    await h.command('Claude 设置');
+
+    const card = lastContent(h);
+    expect(card).toContain('Claude profile 设置');
+    expect(card).toContain('default_workspace');
+    expect(card).toContain('default_access');
+    expect(card).toContain('max_access');
+    expect(card).toContain('permission_mode');
+    expect(card).toContain('approval_timeout_minutes');
+  });
+
+  it('saves /claude-config submit into the active Claude profile', async () => {
+    vi.useFakeTimers();
+    const h = await createHarness({ activeProfile: 'claude' });
+    const nextWorkspace = join(h.rootDir, 'claude-workspace');
+    await mkdir(nextWorkspace, { recursive: true });
+
+    await h.command('/claude-config submit', {
+      default_workspace: nextWorkspace,
+      default_access: 'workspace',
+      max_access: 'full',
+      permission_mode: 'auto',
+      model: 'opus',
+      approval_timeout_minutes: '5',
+    });
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    const root = await waitForRoot(h.rootDir, (candidate) =>
+      claudeModel(candidate.profiles.claude) === 'opus',
+    );
+    const profile = root.profiles.claude;
+    expect(profile?.workspaces.default).toBe(nextWorkspace);
+    expect(profile?.permissions).toEqual({
+      defaultAccess: 'workspace',
+      maxAccess: 'full',
+      claude: { permissionMode: 'auto' },
+    });
+    expect(profile?.claude).toMatchObject({
+      model: 'opus',
+      approvalTimeoutMinutes: 5,
+    });
+    const card = lastContent(h);
+    expect(card).toContain('Claude 设置已保存');
+    expect(card).toContain('opus');
+  });
+
+  it('rejects a /claude-config permission mode above maxAccess', async () => {
+    vi.useFakeTimers();
+    const h = await createHarness({ activeProfile: 'claude' });
+
+    await h.command('/claude-config submit', {
+      default_access: 'read-only',
+      max_access: 'workspace',
+      permission_mode: 'bypassPermissions',
+    });
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitFor(() => {
+      expect(lastContent(h)).toContain('保存失败');
+    });
+
+    const root = await readRoot(h.rootDir);
+    expect(root.profiles.claude?.permissions.claude?.permissionMode).toBeUndefined();
+  });
+
+  it('rejects /claude-config on a non-Claude profile', async () => {
+    const h = await createHarness({ activeProfile: 'codex-dev' });
+
+    await h.command('/claude-config');
+
+    const message = lastContent(h);
+    expect(message).toContain('当前 profile 不是 Claude');
+  });
+
   it('saves /config submit into the active v2 profile without flattening root config', async () => {
     vi.useFakeTimers();
     const h = await createHarness();

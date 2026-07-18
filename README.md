@@ -181,6 +181,7 @@ If a profile was created with the wrong agent kind, stop or unregister any match
 | `/menu` | Show suggested Feishu / Lark bot floating-menu configuration |
 | `/config` | Adjust presentation preferences, access settings, and lark-cli identity policy |
 | `/codex-config` | Adjust the active Codex profile's permissions, model, default workspace, and Codex home |
+| `/claude-config` | Adjust the active Claude profile's permissions, permission mode, model, default workspace, and approval-card timeout |
 | `/invite user @name` | Allow a user to use the bot in DMs |
 | `/invite admin @name` | Add an access-control admin |
 | `/invite group` | Allow the current group to use the bot |
@@ -218,6 +219,7 @@ Bot custom menus are configured and published in the Feishu / Lark Developer Con
 | `工作目录` | `/ws` |
 | `配置` | `/config` |
 | `Codex 设置` | `/codex-config` |
+| `Claude 设置` | `/claude-config` |
 | `升级检查` | `/upgrade check` |
 | `停止` | `/stop` |
 
@@ -292,6 +294,8 @@ Mode mapping:
 The legacy `sandbox` field is still readable for old configs. After the bridge saves the profile, it migrates that setting to canonical `permissions`.
 
 For Codex profiles, owner/admin users can also send `/codex-config` or use the `Codex 设置` floating-menu entry to edit `workspaces.default`, canonical permissions, Codex home mode, `model`, `model_reasoning_effort`, `ignoreUserConfig`, and `ignoreRules` through a Feishu form card. Model settings are written to the `config.toml` under the Codex home selected for the active profile.
+
+For Claude profiles, owner/admin users can send `/claude-config` or use the `Claude 设置` floating-menu entry to edit `workspaces.default`, canonical permissions, `permissions.claude.permissionMode`, `claude.model`, and `claude.approvalTimeoutMinutes`. Changes take effect from the next Claude session.
 
 ## Data directories
 
