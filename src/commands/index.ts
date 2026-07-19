@@ -6,7 +6,9 @@ import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
 import { claudeCapability, codexCapability } from '../agent/capability';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
+import type { BackgroundRunManager } from '../bot/background-run-manager';
 import type { PendingQueue } from '../bot/pending-queue';
+import type { BgTaskStatus } from '../session/bg-tasks-store';
 import {
   accountCurrentCard,
   accountFailureCard,
@@ -169,6 +171,8 @@ export interface CommandContext {
   activeRuns: ActiveRuns;
   processPool?: ProcessPool;
   runExecutor?: RunExecutor;
+  /** Manager for `/bg` background agents; absent when the feature isn't wired. */
+  backgroundRuns?: BackgroundRunManager;
   pending?: PendingQueue;
   controls: Controls;
   codexHistoryProvider?: (
@@ -216,6 +220,7 @@ const handlers: Record<string, Handler> = {
   '/codex-config': handleCodexConfig,
   '/claude-config': handleClaudeConfig,
   '/stop': handleStop,
+  '/bg': handleBg,
   '/timeout': handleTimeout,
   '/ps': handlePs,
   '/exit': handleExit,
@@ -268,6 +273,77 @@ const ADMIN_COMMANDS = new Set([
 
 function isAdminCommand(cmd: string): boolean {
   return ADMIN_COMMANDS.has(cmd.startsWith('/') ? cmd : `/${cmd}`);
+}
+
+const BG_STATUS_TEXT: Record<BgTaskStatus, string> = {
+  running: '运行中',
+  resuming: '恢复中',
+  done: '已完成',
+  error: '出错',
+  interrupted: '已停止',
+};
+
+/**
+ * `/bg <任务>` starts a background agent; `/bg list` lists this chat's tasks;
+ * `/bg stop <id>` stops one. Background runs proceed on their own scope so they
+ * never block the foreground conversation.
+ */
+async function handleBg(args: string, ctx: CommandContext): Promise<void> {
+  const mgr = ctx.backgroundRuns;
+  if (!mgr) {
+    await reply(ctx, '后台任务功能当前未启用。');
+    return;
+  }
+  const trimmed = args.trim();
+
+  if (trimmed === 'list' || trimmed === '列表') {
+    const tasks = mgr.list(ctx.msg.chatId).slice(0, 20);
+    if (tasks.length === 0) {
+      await reply(ctx, '当前没有后台任务。');
+      return;
+    }
+    const lines = tasks.map((t) => {
+      const status = BG_STATUS_TEXT[t.status] ?? t.status;
+      const note = t.lastNode ? ` · ${t.lastNode}` : '';
+      return `\`${t.taskId}\` · ${status}${note} · ${truncateInline(t.prompt, 40)}`;
+    });
+    await reply(ctx, `**后台任务**\n${lines.join('\n')}`);
+    return;
+  }
+
+  if (trimmed.startsWith('stop ') || trimmed.startsWith('停止 ')) {
+    const id = trimmed.split(/\s+/)[1] ?? '';
+    if (!id) {
+      await reply(ctx, '用法：/bg stop <任务 id>');
+      return;
+    }
+    const ok = await mgr.stop(id);
+    await reply(ctx, ok ? `已请求停止 \`${id}\`。` : `未找到运行中的任务 \`${id}\`。`);
+    return;
+  }
+
+  if (!trimmed) {
+    await reply(ctx, '用法：`/bg <任务描述>` 启动后台任务；`/bg list` 查看；`/bg stop <id>` 停止。');
+    return;
+  }
+
+  const res = await mgr.submit({
+    chatId: ctx.msg.chatId,
+    scopeBase: ctx.scope,
+    prompt: trimmed,
+    actorId: ctx.msg.senderId,
+    chatType: ctx.msg.chatType,
+  });
+  if (res.ok) {
+    await reply(ctx, `已在后台启动任务 \`${res.taskId}\`，完成后我会通知你。`);
+  } else {
+    await reply(ctx, `❌ ${res.reason}`);
+  }
+}
+
+function truncateInline(s: string, max: number): string {
+  const oneLine = s.replace(/\s+/g, ' ').trim();
+  return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max)}…`;
 }
 
 export async function tryHandleCommand(ctx: CommandContext): Promise<boolean> {

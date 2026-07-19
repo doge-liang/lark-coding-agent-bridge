@@ -56,6 +56,9 @@ import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { ActiveRuns, type RunHandle } from './active-runs';
+import { BackgroundRunManager } from './background-run-manager';
+import { renderBgTaskCard } from '../card/bg-task-card';
+import type { BgTasksStore } from '../session/bg-tasks-store';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, startRunFlow } from './run-flow';
@@ -191,6 +194,8 @@ export interface StartChannelDeps {
   workspaces: WorkspaceStore;
   controls: Controls;
   appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'>;
+  /** Persistent store for `/bg` background agents; enables the feature when set. */
+  bgTasks?: BgTasksStore;
   /** Test/operations tuning for long-running stream behavior. */
   streamTiming?: {
     markdownRotateAfterMs?: number;
@@ -283,6 +288,58 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   const channel = createLarkChannel(opts);
   const media = new MediaCache(channel, deps.appPaths?.mediaDir);
 
+  // `/bg` background agents. Each task runs on its own scope (never contends
+  // with the foreground chat), is capped by the manager's own pool, and is
+  // persisted so recover() can resume it after a restart. startRun mirrors the
+  // foreground run path (access → capability → startRunFlow), and session ids
+  // are recorded into the SessionStore keyed by the bg scope so startRunFlow
+  // auto-resumes them on recovery.
+  const backgroundRuns = deps.bgTasks
+    ? new BackgroundRunManager({
+        store: deps.bgTasks,
+        maxConcurrent: 5,
+        startRun: async ({ scopeId, chatId, prompt, actorId, chatType }) => {
+          const access =
+            chatType === 'p2p'
+              ? canUseDm(controls.profileConfig, controls, actorId)
+              : canUseGroup(controls.profileConfig, controls, chatId, actorId);
+          const capability =
+            controls.profileConfig.agentKind === 'codex'
+              ? codexCapability(controls.profileConfig)
+              : claudeCapability(controls.profileConfig);
+          const flow = await startRunFlow({
+            scopeId,
+            scope: { source: 'im', chatId, actorId },
+            prompt,
+            attachments: [],
+            access,
+            capability,
+            profileConfig: controls.profileConfig,
+            sessions,
+            sessionCatalog,
+            workspaces,
+            executor,
+            now: Date.now(),
+          });
+          if (!flow.ok) return { ok: false, reason: flow.rejectReason.userVisible };
+          return { ok: true, execution: flow.execution };
+        },
+        recordSession: (scopeId, sessionId, cwd) => {
+          sessions.set(scopeId, sessionId, cwd || (controls.profileConfig.workspaces.default ?? ''));
+        },
+        postCard: async (chatId, view) => {
+          const { messageId } = await sendManagedCard(channel, chatId, renderBgTaskCard(view));
+          return messageId;
+        },
+        updateCard: async (_chatId, cardId, view) => {
+          await updateManagedCard(channel, cardId, renderBgTaskCard(view));
+        },
+        notify: async (chatId, text) => {
+          await channel.send(chatId, { markdown: text });
+        },
+      })
+    : undefined;
+
   // Pending → run handoff: while a run is active on a chat, block its pending
   // queue so messages keep accumulating without flushing. When the run ends,
   // unblock arms a fresh quiet-window timer. Net effect: at most one run per
@@ -339,6 +396,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           chatModeCache,
           executor,
           pool,
+          backgroundRuns,
         }),
       ).catch((err) => log.fail('intake', err));
     },
@@ -443,6 +501,12 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   });
   console.log('正在监听消息。按 Ctrl+C 退出。\n');
 
+  // Resume background tasks left active by a previous process. Fire-and-forget:
+  // recovery re-submits runs and posts progress but must not block startup.
+  if (backgroundRuns) {
+    void backgroundRuns.recover().catch((err) => log.fail('bg', err, { step: 'recover' }));
+  }
+
   return {
     channel,
     disconnect: async () => {
@@ -540,6 +604,7 @@ interface IntakeDeps {
   chatModeCache: ChatModeCache;
   executor: RunExecutor;
   pool: ProcessPool;
+  backgroundRuns?: BackgroundRunManager;
 }
 
 async function intakeMessage(deps: IntakeDeps): Promise<void> {
@@ -556,6 +621,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     chatModeCache,
     executor,
     pool,
+    backgroundRuns,
   } = deps;
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
   // Resolve scope (and underlying chat mode) once at intake — every
@@ -626,6 +692,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     }),
     runExecutor: executor,
     processPool: pool,
+    backgroundRuns,
     pending,
     controls,
   });

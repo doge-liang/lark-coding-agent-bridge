@@ -12,6 +12,17 @@ interface ContentBlock {
   is_error?: boolean;
 }
 
+interface StreamDelta {
+  type?: string;
+  text?: string;
+  thinking?: string;
+}
+
+interface StreamRawEvent {
+  type?: string;
+  delta?: StreamDelta;
+}
+
 interface SdkRawMessage {
   type?: string;
   subtype?: string;
@@ -21,6 +32,8 @@ interface SdkRawMessage {
   model?: string;
   tool_name?: string;
   decision_reason?: string;
+  /** Present on `stream_event` partial messages (includePartialMessages). */
+  event?: StreamRawEvent;
   message?: { content?: ContentBlock[] } | string;
   usage?: {
     input_tokens?: number;
@@ -34,14 +47,37 @@ interface SdkRawMessage {
  * Translate one SDKMessage into zero or more AgentEvents. Mirrors the field
  * access of the previous stream-json translator — SDK assistant/user messages
  * carry the same Anthropic content-block schema and usage token names.
+ *
+ * When `opts.streaming` is set (includePartialMessages enabled), text and
+ * thinking are emitted incrementally from `stream_event` partial frames, and
+ * the final `assistant` frame emits only its tool_use blocks — its text and
+ * thinking are suppressed to avoid re-appending content already streamed (the
+ * run-state reducer accumulates text deltas, so re-emitting the full block
+ * would duplicate the whole message).
  */
-export function translateSdkMessage(raw: unknown): AgentEvent[] {
+export function translateSdkMessage(
+  raw: unknown,
+  opts: { streaming?: boolean } = {},
+): AgentEvent[] {
   if (!raw || typeof raw !== 'object') return [];
   const msg = raw as SdkRawMessage;
   const out: AgentEvent[] = [];
 
   if (msg.type === 'system' && msg.subtype === 'init') {
     out.push({ type: 'system', sessionId: msg.session_id, cwd: msg.cwd, model: msg.model });
+    return out;
+  }
+
+  if (opts.streaming && msg.type === 'stream_event') {
+    const ev = msg.event;
+    if (ev?.type === 'content_block_delta') {
+      const d = ev.delta;
+      if (d?.type === 'text_delta' && typeof d.text === 'string' && d.text) {
+        out.push({ type: 'text', delta: d.text });
+      } else if (d?.type === 'thinking_delta' && typeof d.thinking === 'string' && d.thinking) {
+        out.push({ type: 'thinking', delta: d.thinking });
+      }
+    }
     return out;
   }
 
@@ -63,12 +99,18 @@ export function translateSdkMessage(raw: unknown): AgentEvent[] {
     }
     const content = typeof msg.message === 'object' ? (msg.message?.content ?? []) : [];
     for (const block of content) {
-      if (block.type === 'text' && typeof block.text === 'string' && block.text) {
+      if (block.type === 'tool_use' && block.id && block.name) {
+        // tool_use always comes from the final frame (never streamed), so it is
+        // emitted in both modes.
+        out.push({ type: 'tool_use', id: block.id, name: block.name, input: block.input });
+      } else if (opts.streaming) {
+        // text/thinking already arrived as stream_event deltas — skip to avoid
+        // duplicating the whole block.
+        continue;
+      } else if (block.type === 'text' && typeof block.text === 'string' && block.text) {
         out.push({ type: 'text', delta: block.text });
       } else if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
         out.push({ type: 'thinking', delta: block.thinking });
-      } else if (block.type === 'tool_use' && block.id && block.name) {
-        out.push({ type: 'tool_use', id: block.id, name: block.name, input: block.input });
       }
     }
     return out;
