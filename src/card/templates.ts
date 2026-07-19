@@ -295,6 +295,7 @@ export function helpCard(agentName = 'Agent'): object {
         '- `/reconnect` — 强制重连 WebSocket(网络抖动后 bot 没反应时用)',
         `- \`/doctor [描述]\` — 把日志和描述交给 ${escapedAgentName} 自助诊断`,
         '- `/upgrade [status|check|apply|rollback]` — 管理员私聊执行受控自更新',
+        '- `/ov` — OpenViking 记忆服务：状态、模型配置、记忆注入开关',
         '- `/help` — 本帮助',
         '',
         `其他内容直接交给 ${escapedAgentName}。`,
@@ -369,6 +370,55 @@ export function menuCard(agentName = 'Agent'): object {
       { text: '💡 帮助', value: { cmd: 'help' } },
     ]),
   ]);
+}
+
+export interface OpenVikingStatusInfo {
+  unitState: string;
+  healthy: boolean;
+  memoryEnabled: boolean;
+  embeddingSummary: string;
+  vlmSummary: string;
+  /** Set when ov.conf exists but failed to parse. */
+  confError?: string;
+}
+
+export function openvikingStatusCard(info: OpenVikingStatusInfo): object {
+  const serviceLine = info.healthy
+    ? '🟢 运行中（健康检查通过）'
+    : info.unitState === 'active'
+      ? '🟡 已启动但健康检查未通过'
+      : info.unitState === 'failed'
+        ? '🔴 启动失败'
+        : `⚪ 未运行（${info.unitState}）`;
+  const elements: object[] = [
+    divMd(
+      [
+        `**服务状态**:${serviceLine}`,
+        `**记忆注入**:${info.memoryEnabled ? '✅ 开启' : '⛔ 关闭'}`,
+        '',
+        `**Embedding**:${info.embeddingSummary}`,
+        `**VLM**:${info.vlmSummary}`,
+      ].join('\n'),
+    ),
+  ];
+  if (info.confError) {
+    elements.push(HR, divMd(`⚠️ ov.conf 解析失败：\`${escapeCode(info.confError)}\``));
+  }
+  elements.push(
+    HR,
+    divMd(
+      '_记忆注入开启后：每次运行前检索相关长期记忆注入提示词；运行正常结束后异步提交对话，由 OpenViking 抽取记忆。Claude 与 Codex 后端共用同一记忆库。_',
+    ),
+    actions([
+      { text: '⚙️ 修改配置', value: { cmd: 'ov.form' }, style: 'primary' },
+      { text: '🔄 重启服务', value: { cmd: 'ov.restart' } },
+      info.memoryEnabled
+        ? { text: '⛔ 关闭记忆', value: { cmd: 'ov.memory', arg: 'off' }, style: 'danger' }
+        : { text: '✅ 开启记忆', value: { cmd: 'ov.memory', arg: 'on' } },
+      { text: '↻ 刷新', value: { cmd: 'ov.status' } },
+    ]),
+  );
+  return shell('🧠 OpenViking 记忆', elements);
 }
 
 function escapeMd(s: string): string {

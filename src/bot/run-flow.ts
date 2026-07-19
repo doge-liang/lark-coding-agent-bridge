@@ -14,6 +14,7 @@ import {
   type WorkingDirectoryRejectReason,
   type WorkingDirectoryResolveResult,
 } from '../policy/workspace';
+import type { OpenVikingMemory } from '../openviking/memory';
 import type { RunExecution, RunExecutor } from '../runtime/run-executor';
 import { RunRejected, type RunRejectedCode } from '../runtime/errors';
 import type { SessionCatalog } from '../session/catalog';
@@ -32,6 +33,9 @@ export interface StartRunFlowInput {
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
   executor: RunExecutor;
+  /** Optional OpenViking unified memory: injects retrieved context before the
+   * run and records the exchange after it, for both agent backends. */
+  memory?: OpenVikingMemory;
   now: number;
   stopGraceMs?: number;
   observability?: {
@@ -88,10 +92,17 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
     };
   }
 
+  // Memory augmentation happens before policy evaluation so the injected
+  // block is part of the audited prompt. augmentPrompt is fail-open: any
+  // OpenViking error returns the original prompt untouched.
+  const prompt = input.memory
+    ? await input.memory.augmentPrompt(input.scopeId, input.prompt)
+    : input.prompt;
+
   const policy = evaluateRunPolicy({
     scope: input.scope,
     attachments: input.attachments,
-    prompt: input.prompt,
+    prompt,
     requestedCwd,
     cwdRealpath: workspace.cwdRealpath,
     access: input.access,
@@ -172,6 +183,16 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
     }
     throw err;
   }
+
+  // Record the exchange for memory extraction via an independent fanout
+  // subscriber — the card driver's consumer is untouched. Records the
+  // original prompt (not the augmented one) so injected memories don't get
+  // re-extracted into the store.
+  input.memory?.observeRun({
+    scopeId: input.scopeId,
+    prompt: input.prompt,
+    events: execution.subscribe(),
+  });
 
   return {
     ok: true,
