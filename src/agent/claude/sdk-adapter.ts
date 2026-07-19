@@ -4,6 +4,7 @@ import { mergeProcessEnv } from '../../platform/spawn';
 import { buildBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
+import { loadActiveOutputStyleAppend } from './output-style';
 import { classifyTool } from './permission-policy';
 import {
   CLAUDE_DEFAULT_PERMISSION_MODE,
@@ -39,6 +40,13 @@ export interface ClaudeSdkAdapterOptions {
    * modes) since Phase 1a has no consumer to answer the prompt.
    */
   approvalEnabled?: boolean;
+  /**
+   * Stream assistant text/thinking incrementally via includePartialMessages,
+   * rendering into the Feishu streaming card as tokens arrive. Defaults to the
+   * `CLAUDE_STREAM_PARTIALS=1` env flag (off otherwise) so it can be toggled
+   * without a config-schema change while the feature is validated.
+   */
+  streamPartials?: boolean;
 }
 
 const DEFAULT_PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
@@ -53,6 +61,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
   private readonly queryFn: QueryFn;
   private readonly permissionTimeoutMs: number;
   private readonly approvalEnabled: boolean;
+  private readonly streamPartials: boolean;
   private botIdentity: AgentBotIdentity | undefined;
 
   constructor(opts: ClaudeSdkAdapterOptions = {}) {
@@ -62,6 +71,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
     this.queryFn = opts.queryFn ?? (sdkQuery as unknown as QueryFn);
     this.permissionTimeoutMs = opts.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS;
     this.approvalEnabled = opts.approvalEnabled ?? false;
+    this.streamPartials = opts.streamPartials ?? process.env.CLAUDE_STREAM_PARTIALS === '1';
   }
 
   setBotIdentity(identity: AgentBotIdentity): void {
@@ -95,11 +105,15 @@ export class ClaudeSdkAdapter implements AgentAdapter {
       cwd: opts.cwd,
       abortController: controller,
       pathToClaudeCodeExecutable: this.binary,
-      includePartialMessages: false,
+      includePartialMessages: this.streamPartials,
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: buildBridgeSystemPrompt(this.botIdentity),
+        // The interactive TUI injects the user's chosen output style into the
+        // system prompt; the headless SDK path does not, so recover it here and
+        // append after the bridge conventions. Empty string when no custom
+        // style is configured, so this is a no-op by default.
+        append: buildBridgeSystemPrompt(this.botIdentity) + loadActiveOutputStyleAppend(),
       },
       // Isolate from on-disk Claude Code settings. With settingSources omitted
       // the SDK loads ~/.claude/settings.json (and project/local), whose
@@ -226,7 +240,7 @@ export class ClaudeSdkAdapter implements AgentAdapter {
       let sawTerminal = false;
       try {
         for await (const msg of q) {
-          for (const evt of translateSdkMessage(msg)) {
+          for (const evt of translateSdkMessage(msg, { streaming: this.streamPartials })) {
             if (evt.type === 'done' || evt.type === 'error') sawTerminal = true;
             pushEvent(evt);
           }

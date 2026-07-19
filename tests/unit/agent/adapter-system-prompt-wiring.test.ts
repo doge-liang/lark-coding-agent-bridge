@@ -1,6 +1,9 @@
 import { EventEmitter } from 'node:events';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spawnMock = vi.hoisted(() => ({
   spawnProcess: vi.fn(),
@@ -40,8 +43,24 @@ function fakeChild(): FakeChild {
   return child;
 }
 
+// Output style is loaded from CLAUDE_CONFIG_DIR (falling back to ~/.claude).
+// Pin it to an empty dir so these wiring assertions don't pick up whatever
+// output style happens to be configured on the box running the tests.
+let prevConfigDir: string | undefined;
+const cleanups: Array<() => void> = [];
+
 beforeEach(() => {
   spawnMock.spawnProcess.mockReset();
+  prevConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  const empty = mkdtempSync(join(tmpdir(), 'cc-noconfig-'));
+  cleanups.push(() => rmSync(empty, { recursive: true, force: true }));
+  process.env.CLAUDE_CONFIG_DIR = empty;
+});
+
+afterEach(() => {
+  if (prevConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = prevConfigDir;
+  cleanups.splice(0).forEach((c) => c());
 });
 
 describe('ClaudeSdkAdapter system prompt wiring', () => {
@@ -90,6 +109,28 @@ describe('ClaudeSdkAdapter system prompt wiring', () => {
       preset: 'claude_code',
       append: buildBridgeSystemPrompt(undefined),
     });
+  });
+
+  it('appends the configured output style after the bridge prompt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cc-style-'));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ outputStyle: 'Terse' }));
+    mkdirSync(join(dir, 'output-styles'));
+    writeFileSync(
+      join(dir, 'output-styles', 'terse.md'),
+      '---\nname: Terse\n---\n\nBe brief.',
+    );
+    process.env.CLAUDE_CONFIG_DIR = dir;
+
+    let captured: Record<string, unknown> | undefined;
+    const adapter = new ClaudeSdkAdapter({ queryFn: fakeQueryCapturing((o) => (captured = o)) });
+    const run = adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
+    for await (const _ of run.events) {
+      // drain to completion
+    }
+
+    const sp = captured?.systemPrompt as { append: string };
+    expect(sp.append).toBe(`${buildBridgeSystemPrompt(undefined)}\n\nBe brief.`);
   });
 
   it('isolates from on-disk settings so ambient permissions.allow cannot bypass canUseTool', async () => {

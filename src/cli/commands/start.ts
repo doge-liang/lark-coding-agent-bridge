@@ -46,6 +46,7 @@ import { resolveProfileRuntime } from '../../runtime/profile-runtime';
 import { refreshOwnerControls } from '../../policy/owner';
 import { SessionStore } from '../../session/store';
 import { SessionCatalog } from '../../session/catalog';
+import { BgTasksStore } from '../../session/bg-tasks-store';
 import {
   clearPendingUpgradeNotification,
   markUpgradeActivationHealthy,
@@ -156,6 +157,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
           await sessionCatalog.load();
           const workspaces = new WorkspaceStore(appPaths.workspacesFile);
           await workspaces.load();
+          const bgTasks = new BgTasksStore(appPaths.bgTasksFile);
 
         await gcMediaCache(MEDIA_GC_MAX_AGE_MS, appPaths.mediaDir);
         await gcOldLogs();
@@ -285,6 +287,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
                   sessions,
                   sessionCatalog,
                   workspaces,
+                  bgTasks,
                   controls: nextControls,
                   appPaths: nextRuntime.appPaths,
                 });
@@ -345,6 +348,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
           sessions,
           sessionCatalog,
           workspaces,
+          bgTasks,
           controls,
           appPaths,
         });
